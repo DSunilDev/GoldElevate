@@ -1,0 +1,24 @@
+{
+  "name": "gold-investment-mobile-app-package",
+  "version": "1.0.0",
+  "description": "Complete Gold Investment Mobile Application Package",
+  "main": "index.js",
+  "scripts": {
+    "setup:db": "cd database && mysql -u root -p mlm_manager < 01_init.sql && mysql -u root -p mlm_manager < 02_performance_indexes.sql",
+    "setup:backend": "cd backend && npm install",
+    "setup:mobile": "cd mobile-app && npm install",
+    "setup:all": "npm run setup:backend && npm run setup:mobile",
+    "start:backend": "cd backend && npm start",
+    "start:mobile": "cd mobile-app && npx expo start"
+  },
+  "keywords": [
+    "mobile-app",
+    "react-native",
+    "expo",
+    "mlm",
+    "investment"
+  ],
+  "author": "",
+  "license": "ISC"
+}
+

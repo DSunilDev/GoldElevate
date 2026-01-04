@@ -1,0 +1,441 @@
+Runtime Error Patterns Report - 2026-01-01T01:43:08.119Z
+================================================================================
+
+Total files checked: 14
+Files with potential issues: 6
+
+FILE: backend/routes/admin.js
+────────────────────────────────────────────────────────────────────────────────
+1. Destructured array with .length access
+   Line 373: Array destructuring from query result followed by .length check - may be undefined
+   Context:
+   
+       try {
+         const [dbSettings] = await query(
+           `SELECT * FROM payment_gateway_settings ORDER BY id DESC LIMIT 1`
+         );
+         if (dbSettings.length > 0) {
+
+2. Direct .length access without null check
+   Line 376: Direct .length access without checking if variable exists first
+   Context:
+           `SELECT * FROM payment_gateway_settings ORDER BY id DESC LIMIT 1`
+         );
+         if (dbSettings.length > 0) {
+           settings = dbSettings[0];
+         }
+       } catch (tableError) {
+
+3. Direct .length access without null check
+   Line 432: Direct .length access without checking if variable exists first
+   Context:
+       }
+   
+       if (existing.length > 0) {
+         const updateFields = [];
+         const updateValues = [];
+   
+
+4. Unsafe .length access on destructured variable
+   Line 376: Variable dbSettings is destructured from query result but .length is accessed without null/undefined check
+   Context:
+       try {
+         const [dbSettings] = await query(
+           `SELECT * FROM payment_gateway_settings ORDER BY id DESC LIMIT 1`
+         );
+         if (dbSettings.length > 0) {
+           settings = dbSettings[0];
+         }
+
+
+FILE: backend/routes/auth.js
+────────────────────────────────────────────────────────────────────────────────
+1. Destructured array with .length access
+   Line 1580: Array destructuring from query result followed by .length check - may be undefined
+   Context:
+       // Verify user still exists and is active
+       if (decoded.role === 'member') {
+         const [member] = await query(
+           'SELECT memberid, login, active FROM member WHERE memberid = ?',
+           [decoded.memberid]
+         );
+
+2. Direct .length access without null check
+   Line 30: Direct .length access without checking if variable exists first
+   Context:
+       );
+   
+       if (members.length > 0) {
+         const member = members[0];
+         
+         // Verify password (assuming SHA1 hash with login prefix)
+
+3. Direct .length access without null check
+   Line 70: Direct .length access without checking if variable exists first
+   Context:
+       );
+   
+       if (admins.length > 0) {
+         const admin = admins[0];
+         const crypto = require('crypto');
+         const hashedPassword = crypto.createHash('sha1').update(login + passwd).digest('hex');
+
+4. Direct .length access without null check
+   Line 80: Direct .length access without checking if variable exists first
+   Context:
+         );
+   
+         if (adminCheck.length > 0) {
+           const token = jwt.sign(
+             {
+               adminid: admin.adminid,
+
+5. Direct .length access without null check
+   Line 134: Direct .length access without checking if variable exists first
+   Context:
+       );
+   
+       if (existing.length === 0) {
+         return res.status(404).json({
+           success: false,
+           message: 'Phone number not registered. Please sign up first.',
+
+6. Direct .length access without null check
+   Line 271: Direct .length access without checking if variable exists first
+   Context:
+       );
+   
+       if (members.length === 0) {
+         global.otpStore.delete(phone);
+         return res.status(404).json({
+           success: false,
+
+7. Direct .length access without null check
+   Line 344: Direct .length access without checking if variable exists first
+   Context:
+       );
+   
+       if (existing.length > 0) {
+         return res.status(400).json({
+           success: false,
+           message: 'Phone number already registered'
+
+8. Direct .length access without null check
+   Line 563: Direct .length access without checking if variable exists first
+   Context:
+       );
+   
+       if (existing.length > 0) {
+         logger.warn(`Phone ${phone} already registered (memberid: ${existing[0].memberid})`);
+         return res.status(400).json({
+           success: false,
+
+9. Direct .length access without null check
+   Line 781: Direct .length access without checking if variable exists first
+   Context:
+       );
+   
+       if (existing.length > 0) {
+         return res.status(400).json({
+           success: false,
+           message: 'Phone number already registered. Please sign in instead.',
+
+10. Direct .length access without null check
+   Line 927: Direct .length access without checking if variable exists first
+   Context:
+       );
+   
+       if (existing.length > 0) {
+         logger.warn(`Phone ${phone} already registered (memberid: ${existing[0].memberid})`);
+         return res.status(400).json({
+           success: false,
+
+11. Direct .length access without null check
+   Line 982: Direct .length access without checking if variable exists first
+   Context:
+       const agentTypeCheck = await query('SELECT typeid FROM def_type WHERE typeid = ?', [agentTypeId]);
+       
+       if (agentTypeCheck.length === 0) {
+         // Create agent type if it doesn't exist
+         try {
+           await query(
+
+12. Direct .length access without null check
+   Line 1097: Direct .length access without checking if variable exists first
+   Context:
+       );
+   
+       if (existingAdmin.length > 0 || existingMember.length > 0) {
+         return res.status(400).json({
+           success: false,
+           message: 'Phone number already registered. Please sign in instead.',
+
+13. Direct .length access without null check
+   Line 1242: Direct .length access without checking if variable exists first
+   Context:
+       );
+   
+       if (existing.length === 0) {
+         return res.status(404).json({
+           success: false,
+           message: 'Admin account not found. Please sign up first.',
+
+14. Direct .length access without null check
+   Line 1377: Direct .length access without checking if variable exists first
+   Context:
+       );
+   
+       if (admins.length === 0) {
+         global.otpStore.delete(phone);
+         return res.status(404).json({
+           success: false,
+
+15. Direct .length access without null check
+   Line 1459: Direct .length access without checking if variable exists first
+   Context:
+       );
+   
+       if (existingAdmin.length > 0 || existingMember.length > 0) {
+         logger.warn(`Phone ${phone} already registered`);
+         return res.status(400).json({
+           success: false,
+
+16. Direct .length access without null check
+   Line 1584: Direct .length access without checking if variable exists first
+   Context:
+           [decoded.memberid]
+         );
+         if (member.length === 0 || member[0].active !== 'Yes') {
+           return res.status(401).json({ success: false, message: 'User not found or inactive' });
+         }
+       }
+
+17. Unsafe .length access on destructured variable
+   Line 640: Variable topMembers is destructured from query result but .length is accessed without null/undefined check
+   Context:
+   
+       // Get sponsor (default to existing member or 1)
+       // First, try to find any existing member
+       const [topMembers] = await query('SELECT memberid FROM member ORDER BY memberid LIMIT 1');
+       const defaultSponsor = topMembers && topMembers.length > 0 ? topMembers[0].memberid : 1;
+       
+       const sponsor = sponsorid || defaultSponsor;
+
+18. Unsafe .length access on destructured variable
+   Line 1584: Variable member is destructured from query result but .length is accessed without null/undefined check
+   Context:
+         const [member] = await query(
+           'SELECT memberid, login, active FROM member WHERE memberid = ?',
+           [decoded.memberid]
+         );
+         if (member.length === 0 || member[0].active !== 'Yes') {
+           return res.status(401).json({ success: false, message: 'User not found or inactive' });
+         }
+
+
+FILE: backend/routes/investments.js
+────────────────────────────────────────────────────────────────────────────────
+1. Direct .length access without null check
+   Line 65: Direct .length access without checking if variable exists first
+   Context:
+           );
+   
+           if (existing.length > 0) {
+             throw new Error('UPI reference number already used');
+           }
+   
+
+
+FILE: backend/routes/packages.js
+────────────────────────────────────────────────────────────────────────────────
+1. Destructured array with .length access
+   Line 65: Array destructuring from query result followed by .length check - may be undefined
+   Context:
+     try {
+       const { id } = req.params;
+       const [packages] = await query(
+         'SELECT typeid, short, name, price, bv, daily_return, yes21, c_upper FROM def_type WHERE typeid = ?',
+         [id]
+       );
+
+2. Destructured array with .length access
+   Line 97: Array destructuring from query result followed by .length check - may be undefined
+   Context:
+   
+       // Check if package exists
+       const [existing] = await query('SELECT typeid FROM def_type WHERE typeid = ?', [id]);
+       if (existing.length === 0) {
+         return res.status(404).json({ success: false, error: 'Package not found' });
+       }
+
+3. Direct .length access without null check
+   Line 69: Direct .length access without checking if variable exists first
+   Context:
+         [id]
+       );
+       if (packages.length === 0) {
+         return res.status(404).json({ success: false, error: 'Package not found' });
+       }
+       res.json({ success: true, data: packages[0] });
+
+4. Direct .length access without null check
+   Line 98: Direct .length access without checking if variable exists first
+   Context:
+       // Check if package exists
+       const [existing] = await query('SELECT typeid FROM def_type WHERE typeid = ?', [id]);
+       if (existing.length === 0) {
+         return res.status(404).json({ success: false, error: 'Package not found' });
+       }
+   
+
+5. Direct .length access without null check
+   Line 131: Direct .length access without checking if variable exists first
+   Context:
+       }
+   
+       if (updates.length === 0) {
+         return res.status(400).json({ success: false, error: 'No fields to update' });
+       }
+   
+
+6. Unsafe .length access on destructured variable
+   Line 69: Variable packages is destructured from query result but .length is accessed without null/undefined check
+   Context:
+       const [packages] = await query(
+         'SELECT typeid, short, name, price, bv, daily_return, yes21, c_upper FROM def_type WHERE typeid = ?',
+         [id]
+       );
+       if (packages.length === 0) {
+         return res.status(404).json({ success: false, error: 'Package not found' });
+       }
+
+7. Unsafe .length access on destructured variable
+   Line 98: Variable existing is destructured from query result but .length is accessed without null/undefined check
+   Context:
+       const { name, price, bv, daily_return, c_upper, yes21 } = req.body;
+   
+       // Check if package exists
+       const [existing] = await query('SELECT typeid FROM def_type WHERE typeid = ?', [id]);
+       if (existing.length === 0) {
+         return res.status(404).json({ success: false, error: 'Package not found' });
+       }
+
+
+FILE: backend/routes/payment-gateway.js
+────────────────────────────────────────────────────────────────────────────────
+1. Destructured array with .length access
+   Line 23: Array destructuring from query result followed by .length check - may be undefined
+   Context:
+   
+       try {
+         const [dbSettings] = await query(
+           `SELECT * FROM payment_gateway_settings ORDER BY id DESC LIMIT 1`
+         );
+         if (dbSettings.length > 0) {
+
+2. Destructured array with .length access
+   Line 80: Array destructuring from query result followed by .length check - may be undefined
+   Context:
+   
+       // Check if settings exist
+       const [existing] = await query(
+         `SELECT id FROM payment_gateway_settings ORDER BY id DESC LIMIT 1`
+       );
+   
+
+3. Direct .length access without null check
+   Line 26: Direct .length access without checking if variable exists first
+   Context:
+           `SELECT * FROM payment_gateway_settings ORDER BY id DESC LIMIT 1`
+         );
+         if (dbSettings.length > 0) {
+           settings = dbSettings[0];
+         }
+       } catch (tableError) {
+
+4. Direct .length access without null check
+   Line 84: Direct .length access without checking if variable exists first
+   Context:
+       );
+   
+       if (existing.length > 0) {
+         // Update existing
+         const updateFields = [];
+         const updateValues = [];
+
+5. Unsafe .length access on destructured variable
+   Line 26: Variable dbSettings is destructured from query result but .length is accessed without null/undefined check
+   Context:
+       try {
+         const [dbSettings] = await query(
+           `SELECT * FROM payment_gateway_settings ORDER BY id DESC LIMIT 1`
+         );
+         if (dbSettings.length > 0) {
+           settings = dbSettings[0];
+         }
+
+6. Unsafe .length access on destructured variable
+   Line 84: Variable existing is destructured from query result but .length is accessed without null/undefined check
+   Context:
+       const [existing] = await query(
+         `SELECT id FROM payment_gateway_settings ORDER BY id DESC LIMIT 1`
+       );
+   
+       if (existing.length > 0) {
+         // Update existing
+         const updateFields = [];
+
+
+FILE: backend/routes/withdraw.js
+────────────────────────────────────────────────────────────────────────────────
+1. Destructured array with .length access
+   Line 291: Array destructuring from query result followed by .length check - may be undefined
+   Context:
+       const { reason = 'Withdrawal request rejected by admin' } = req.body;
+   
+       const [withdraw] = await query(
+         `SELECT * FROM member_withdraw WHERE id = ?`,
+         [id]
+       );
+
+2. Direct .length access without null check
+   Line 202: Direct .length access without checking if variable exists first
+   Context:
+         );
+   
+         if (withdraw.length === 0) {
+           throw new Error('Withdrawal request not found');
+         }
+   
+
+3. Direct .length access without null check
+   Line 296: Direct .length access without checking if variable exists first
+   Context:
+       );
+   
+       if (withdraw.length === 0) {
+         return res.status(404).json({
+           success: false,
+           message: 'Withdrawal request not found'
+
+4. Unsafe .length access on destructured variable
+   Line 202: Variable withdraw is destructured from query result but .length is accessed without null/undefined check
+   Context:
+           `SELECT * FROM member_withdraw WHERE id = ?`,
+           [id]
+         );
+   
+         if (withdraw.length === 0) {
+           throw new Error('Withdrawal request not found');
+         }
+
+5. Unsafe .length access on destructured variable
+   Line 296: Variable withdraw is destructured from query result but .length is accessed without null/undefined check
+   Context:
+         `SELECT * FROM member_withdraw WHERE id = ?`,
+         [id]
+       );
+   
+       if (withdraw.length === 0) {
+         return res.status(404).json({
+           success: false,
