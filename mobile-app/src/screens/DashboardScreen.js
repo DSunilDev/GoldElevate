@@ -8,8 +8,8 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { LinearGradient } from 'react-native-linear-gradient';
+import { default as Icon } from 'react-native-vector-icons/MaterialIcons';
 import { dashboardAPI } from '../config/api';
 import { useAuth } from '../context/AuthContext';
 import Toast from 'react-native-toast-message';
@@ -19,18 +19,28 @@ import { showErrorToast, showInfoToast } from '../utils/errorHandler';
 export default function DashboardScreen() {
   const navigation = useNavigation();
   const route = useRoute();
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [hasShownPaymentToast, setHasShownPaymentToast] = useState(false);
 
   useEffect(() => {
+    // Don't load dashboard if user is not authenticated
+    if (!isAuthenticated) {
+      console.log('User not authenticated, skipping dashboard load in useEffect');
+      setLoading(false);
+      return;
+    }
+
     // Clear cache on mount and load fresh data
     // Force clear cache and reload to ensure latest balance is shown
     clearCache(CACHE_KEYS.DASHBOARD).then(() => {
       console.log('Dashboard cache cleared, loading fresh data...');
+      // Double-check authentication before loading
+      if (isAuthenticated) {
       loadDashboard(false); // Always fetch fresh, don't use cache
+      }
     });
     
     // Check for payment success message from navigation
@@ -54,22 +64,36 @@ export default function DashboardScreen() {
         setHasShownPaymentToast(true);
       }, 500);
     }
-  }, [route.params, hasShownPaymentToast]);
+  }, [route.params, hasShownPaymentToast, isAuthenticated]);
 
   // Refresh dashboard when screen comes into focus (e.g., when returning from packages)
   // This ensures package updates from admin are reflected immediately
   useFocusEffect(
     React.useCallback(() => {
+      // Only reload if user is authenticated
+      if (!isAuthenticated) {
+        console.log('User not authenticated, skipping dashboard reload on focus');
+        return;
+      }
+      
       // Clear cache and reload fresh data when screen is focused
       // This ensures package updates from admin are reflected and balance is updated
       console.log('Dashboard screen focused, clearing cache and reloading...');
       clearCache(CACHE_KEYS.DASHBOARD).then(() => {
         loadDashboard(false); // Always fetch fresh, don't use cache
       });
-    }, [])
+    }, [isAuthenticated])
   );
 
   const loadDashboard = async (useCache = true) => {
+    // Don't load dashboard if user is not authenticated
+    if (!isAuthenticated) {
+      console.log('User not authenticated, skipping dashboard load');
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
     try {
       // Try cache first
       if (useCache) {
@@ -78,8 +102,10 @@ export default function DashboardScreen() {
           setStats(cached);
           setLoading(false);
           setRefreshing(false);
-          // Still fetch fresh data in background
+          // Still fetch fresh data in background (only if authenticated)
+          if (isAuthenticated) {
           loadDashboard(false);
+          }
           return;
         }
       }
@@ -92,35 +118,34 @@ export default function DashboardScreen() {
       console.log('[DASHBOARD] Response data:', JSON.stringify(responseData, null, 2));
       
       // Map API response to expected format
-      // Total Balance should be withdrawable balance (earnings only, excluding investment)
+      // Total Balance = Total Earnings - Total Withdrawals (what's currently available after all withdrawals)
       const withdrawableBalance = Number(responseData.stats?.withdrawableBalance || 0);
       const currentBalance = Number(responseData.stats?.currentBalance || 0);
       const totalInvestment = Number(responseData.stats?.totalInvestment || 0);
       const totalReturns = Number(responseData.stats?.totalReturns || 0);
+      const totalEarnings = Number(responseData.stats?.totalEarnings || 0);
+      const totalWithdrawals = Number(responseData.stats?.totalWithdrawals || 0);
       
-      // Total Balance = Withdrawable Balance (earnings only, not including investment)
-      // If withdrawableBalance is provided, use it; otherwise calculate it
-      let totalBalance = withdrawableBalance;
-      if (totalBalance === 0 && currentBalance > 0) {
-        // Fallback calculation if withdrawableBalance is 0 but we have balance
-        totalBalance = Math.max(0, currentBalance - totalInvestment);
-      }
+      // Total Balance from API = Total Earnings - Total Withdrawals
+      // This is what's currently available after all withdrawals
+      const totalBalance = Number(responseData.stats?.totalBalance || 0);
       
       console.log('[DASHBOARD] Balance calculation:', {
+        'API totalBalance': totalBalance,
+        'API totalEarnings': totalEarnings,
+        'API totalWithdrawals': totalWithdrawals,
         'API withdrawableBalance': withdrawableBalance,
         'API currentBalance': currentBalance,
         'API totalInvestment': totalInvestment,
-        'API totalReturns': totalReturns,
-        'Calculated totalBalance': totalBalance,
-        'Fallback calculation': Math.max(0, currentBalance - totalInvestment)
+        'Calculation': `${totalEarnings} - ${totalWithdrawals} = ${totalBalance}`
       });
       
       const mappedStats = {
-        totalBalance: totalBalance, // Only earnings, not investment
-        dailyReturns: responseData.stats?.dailyReturns || responseData.member?.daily_return || 0,
-        totalEarnings: totalReturns, // Total returns received
-        referrals: responseData.stats?.referralCount || 0,
-        activePackage: responseData.member?.package_name || 'N/A',
+        totalBalance: totalBalance, // Total Earnings - Total Withdrawals (currently available after all withdrawals)
+        dailyReturns: responseData.stats?.dailyReturns || 0, // Sum of daily returns from all active packages
+        totalEarnings: responseData.stats?.totalEarnings || responseData.stats?.totalReturns || 0, // Total earnings wallet (accumulated daily returns)
+        referrals: responseData.stats?.referralCount || 0, // Total referrals count (active & inactive)
+        activePackage: responseData.stats?.activePackageNames || responseData.member?.package_name || 'No active package', // All active packages comma-separated
         currentBalance: currentBalance, // Full balance (for reference)
         withdrawableBalance: withdrawableBalance, // Earnings only
         shopBalance: responseData.stats?.shopBalance || 0,
@@ -137,6 +162,15 @@ export default function DashboardScreen() {
       await setCache(CACHE_KEYS.DASHBOARD, mappedStats);
     } catch (error) {
       console.error('Dashboard load error:', error);
+      
+      // Don't show error or try cache if user is not authenticated (likely logged out)
+      if (!isAuthenticated || error.response?.status === 401) {
+        console.log('User not authenticated or 401 error, skipping error handling');
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+      
       // Try cache on error
       const cached = await getCache(CACHE_KEYS.DASHBOARD);
       if (cached) {
@@ -149,9 +183,12 @@ export default function DashboardScreen() {
           dailyReturns: 0,
           totalEarnings: 0,
           referrals: 0,
-          activePackage: 'N/A',
+          activePackage: 'No active package',
         });
+        // Only show error if user is authenticated
+        if (isAuthenticated) {
         showErrorToast(error, 'Unable to load dashboard data');
+        }
       }
     } finally {
       setLoading(false);
@@ -160,11 +197,23 @@ export default function DashboardScreen() {
   };
 
   const onRefresh = async () => {
+    // Don't refresh if user is not authenticated
+    if (!isAuthenticated) {
+      console.log('User not authenticated, skipping dashboard refresh');
+      setRefreshing(false);
+      return;
+    }
+    
     setRefreshing(true);
     // Clear cache on manual refresh to ensure fresh data
     await clearCache(CACHE_KEYS.DASHBOARD);
     await loadDashboard(false);
   };
+
+  // Early return if not authenticated - don't render anything
+  if (!isAuthenticated) {
+    return null;
+  }
 
   if (loading) {
     return (
@@ -224,7 +273,7 @@ export default function DashboardScreen() {
 
           <View style={styles.statRow}>
             <Text style={styles.statLabel}>Active Package:</Text>
-            <Text style={styles.statValue}>{stats?.activePackage || 'N/A'}</Text>
+            <Text style={styles.statValue}>{stats?.activePackage || 'No active package'}</Text>
           </View>
         </View>
 

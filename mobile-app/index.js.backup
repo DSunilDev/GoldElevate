@@ -1,0 +1,51 @@
+// VERY EARLY LOGGING - This should appear immediately
+console.log('📦 index.js: Starting app registration...');
+console.log('📦 index.js: Expo module available:', typeof require !== 'undefined');
+
+try {
+  const { registerRootComponent } = require('expo');
+  const { ErrorUtils } = require('react-native');
+  const App = require('./App').default;
+  
+  console.log('📦 index.js: All imports successful');
+  console.log('📦 index.js: App component:', typeof App);
+  
+  // Global error handler to catch unhandled errors
+  const originalHandler = ErrorUtils.getGlobalHandler();
+  ErrorUtils.setGlobalHandler((error, isFatal) => {
+    console.error('🚨 Global Error Handler:', {
+      error: error?.message,
+      stack: error?.stack,
+      isFatal,
+      name: error?.name
+    });
+    
+    // Call original handler
+    if (originalHandler) {
+      originalHandler(error, isFatal);
+    }
+  });
+  
+  console.log('📦 index.js: Error handler set up');
+  
+  // Handle unhandled promise rejections
+  if (typeof global !== 'undefined') {
+    global.addEventListener?.('unhandledrejection', (event) => {
+      console.error('🚨 Unhandled Promise Rejection:', event.reason);
+    });
+  }
+  
+  console.log('📦 index.js: Registering root component...');
+  
+  // registerRootComponent calls AppRegistry.registerComponent('main', () => App);
+  // It also ensures that whether you load the app in Expo Go or in a native build,
+  // the environment is set up appropriately
+  registerRootComponent(App);
+  
+  console.log('📦 index.js: Root component registered successfully!');
+} catch (error) {
+  console.error('❌ index.js: FATAL ERROR during app registration:', error);
+  console.error('Error stack:', error?.stack);
+  throw error;
+}
+

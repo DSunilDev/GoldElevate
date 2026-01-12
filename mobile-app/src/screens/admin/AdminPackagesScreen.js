@@ -10,7 +10,7 @@ import {
   Alert,
   Modal,
 } from 'react-native';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { default as Icon } from 'react-native-vector-icons/MaterialIcons';
 import { packagesAPI, adminAPI } from '../../config/api';
 import Toast from 'react-native-toast-message';
 import { formatCurrency } from '../../utils/helpers';
@@ -124,8 +124,8 @@ export default function AdminPackagesScreen({ navigation }) {
           <View key={pkg.typeid} style={styles.packageCard}>
             <View style={styles.packageHeader}>
               <View style={styles.packageInfo}>
-                <Text style={styles.packageName}>{pkg.name || pkg.short}</Text>
-                <Text style={styles.packageId}>Package ID: {pkg.typeid}</Text>
+                <Text style={styles.packageName}>{pkg.name || pkg.short || 'Unnamed Package'}</Text>
+                <Text style={styles.packageId}>Package ID: {pkg.typeid != null ? String(pkg.typeid) : 'N/A'}</Text>
               </View>
               <TouchableOpacity
                 style={styles.editButton}
@@ -157,11 +157,11 @@ export default function AdminPackagesScreen({ navigation }) {
                   {formatCurrency(pkg.daily_return || 0)}
                 </Text>
               </View>
-              {pkg.c_upper && (
+              {pkg.c_upper != null && (
                 <View style={styles.detailRow}>
                   <Icon name="arrow-upward" size={16} color="#666" />
                   <Text style={styles.detailLabel}>C Upper:</Text>
-                  <Text style={styles.detailValue}>{pkg.c_upper}</Text>
+                  <Text style={styles.detailValue}>{String(pkg.c_upper || 0)}</Text>
                 </View>
               )}
             </View>
@@ -286,6 +286,7 @@ const styles = StyleSheet.create({
   },
   backButton: {
     padding: 8,
+    zIndex:10,
   },
   headerTitle: {
     fontSize: 20,

@@ -44,11 +44,18 @@ export default {
       ]
     ],
     extra: {
-      apiUrl: "http://172.28.37.188:8081/api",
+      apiUrl: "http://192.168.0.109:8081/api",
       eas: {
-        projectId: "your-project-id-here"
+        projectId: "1f045b98-a15e-4936-9bc4-bd1223fbce1f"
       }
-    }
+    },
+    updates: {
+      enabled: false,
+      fallbackToCacheTimeout: 0,
+      checkAutomatically: 'NEVER',
+      requestHeaders: {}
+    },
+    runtimeVersion: '49.0.0'
   }
 };
 

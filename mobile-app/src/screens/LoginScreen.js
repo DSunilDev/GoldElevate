@@ -12,12 +12,13 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { LinearGradient } from 'react-native-linear-gradient';
+import { default as Icon } from 'react-native-vector-icons/MaterialIcons';
 import { useAuth } from '../context/AuthContext';
 import Toast from 'react-native-toast-message';
 import { authAPI } from '../config/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { sendOTP as msg91SendOTP, verifyOTP as msg91VerifyOTP, retryOTP as msg91RetryOTP } from '../utils/msg91SDK';
 
 export default function LoginScreen() {
   const navigation = useNavigation();
@@ -34,6 +35,7 @@ export default function LoginScreen() {
   const [otpCode, setOtpCode] = useState('');
   const [otpVerified, setOtpVerified] = useState(false);
   const [isAdminLogin, setIsAdminLogin] = useState(false);
+  const [msg91ReqId, setMsg91ReqId] = useState(null); // Store MSG91 request ID
 
   // Password login
   const handlePasswordLogin = async () => {
@@ -93,17 +95,32 @@ export default function LoginScreen() {
     } catch (error) {
       console.error('Password login error:', error);
       const errorMsg = error.response?.data?.message || error.message || 'Login failed';
+      const errorData = error.response?.data;
+      
+      // Check if user is OTP signup user trying to login with password
+      if (errorData?.error === 'OTP signup user cannot login with password' || 
+          errorMsg.includes('OTP') && errorMsg.includes('password')) {
+        Toast.show({
+          type: 'error',
+          text1: 'Login Method Not Allowed',
+          text2: 'This account was created using OTP. Please login using OTP instead.',
+          visibilityTime: 5000,
+        });
+        // Switch to OTP login method
+        setLoginMethod('otp');
+      } else {
       Toast.show({
         type: 'error',
         text1: 'Login Failed',
         text2: errorMsg,
       });
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  // Send OTP for login
+  // Send OTP for login using MSG91 SDK
   const handleSendOTP = async (adminMode = false) => {
     setIsAdminLogin(adminMode);
     
@@ -119,46 +136,29 @@ export default function LoginScreen() {
 
     setLoading(true);
     setOtpCode('');
+    setMsg91ReqId(null);
+
     try {
-      let response;
-      
+      // First, validate phone exists in backend (for member/admin check)
+      let backendResponse;
+      try {
       if (adminMode) {
-        response = await authAPI.sendAdminLoginOTP({ phone: cleanedPhone });
+          backendResponse = await authAPI.sendAdminLoginOTP({ phone: cleanedPhone });
       } else {
         try {
-          response = await authAPI.sendLoginOTP({ phone: cleanedPhone });
+            backendResponse = await authAPI.sendLoginOTP({ phone: cleanedPhone });
         } catch (memberError) {
           if (memberError.response?.status === 404) {
-            response = await authAPI.sendAdminLoginOTP({ phone: cleanedPhone });
+              backendResponse = await authAPI.sendAdminLoginOTP({ phone: cleanedPhone });
             setIsAdminLogin(true);
           } else {
             throw memberError;
           }
         }
       }
-      
-      if (response.data.success) {
-        setShowOtpModal(true);
-        setOtpVerified(false);
-        if (response.data.otp) {
-          Toast.show({
-            type: 'info',
-            text1: 'OTP Generated',
-            text2: `Enter OTP: ${response.data.otp}`,
-            visibilityTime: 10000,
-          });
-          console.log('🔑 OTP for login:', response.data.otp);
-        }
-        Toast.show({
-          type: 'success',
-          text1: 'OTP Generated',
-          text2: 'Please enter the OTP',
-        });
-      }
-    } catch (error) {
-      console.error('Send OTP error:', error);
-      const errorMsg = error.response?.data?.message || error.response?.data?.error || error.message || 'Failed to send OTP';
-      const errorStatus = error.response?.status;
+      } catch (backendError) {
+        const errorStatus = backendError.response?.status;
+        const errorMsg = backendError.response?.data?.message || backendError.response?.data?.error || '';
       
       if (errorStatus === 404 || errorMsg.includes('not found') || errorMsg.includes('not registered')) {
         Toast.show({
@@ -171,20 +171,51 @@ export default function LoginScreen() {
         });
         setShowOtpModal(false);
         setIsAdminLogin(false);
+          setLoading(false);
+          return;
+        }
+        throw backendError;
+      }
+
+      // Send OTP using MSG91 SDK
+      const msg91Result = await msg91SendOTP(cleanedPhone);
+      
+      if (msg91Result.success && msg91Result.reqId) {
+        setMsg91ReqId(msg91Result.reqId);
+        setShowOtpModal(true);
+        setOtpVerified(false);
+        Toast.show({
+          type: 'success',
+          text1: 'OTP Sent',
+          text2: 'Please check your phone for the OTP',
+        });
+        console.log('✅ MSG91 OTP sent, reqId:', msg91Result.reqId);
       } else {
+        // Fallback: use backend OTP (already validated above)
+        setShowOtpModal(true);
+        setOtpVerified(false);
+        Toast.show({
+          type: 'success',
+          text1: 'OTP Sent',
+          text2: 'Please check your phone for the OTP',
+        });
+      }
+    } catch (error) {
+      console.error('Send OTP error:', error);
+      const errorMsg = error.response?.data?.message || error.response?.data?.error || error.message || 'Failed to send OTP';
+      
         Toast.show({
           type: 'error',
           text1: adminMode ? 'Admin OTP Error' : 'Error',
           text2: errorMsg,
           visibilityTime: 5000,
         });
-      }
     } finally {
       setLoading(false);
     }
   };
 
-  // Verify OTP for login
+  // Verify OTP for login (uses MSG91 SDK if reqId available, otherwise backend fallback)
   const handleVerifyOTP = async () => {
     if (!otpCode || otpCode.length < 4) {
       Toast.show({
@@ -198,8 +229,69 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       const cleanedPhoneForVerify = phoneNumber.replace(/\D/g, '');
-      let verifyResponse;
-      
+      let verified = false;
+      let verifyResponse = null;
+      let isMsg91Verified = false; // Track if MSG91 SDK verified
+
+      // Try MSG91 SDK verification first if reqId is available
+      if (msg91ReqId) {
+        console.log('🔍 Attempting MSG91 SDK verification with reqId:', msg91ReqId, 'OTP:', otpCode.trim());
+        try {
+          const msg91VerifyResult = await msg91VerifyOTP(msg91ReqId, otpCode.trim());
+          console.log('📱 MSG91 SDK verification result:', msg91VerifyResult);
+          
+          if (msg91VerifyResult.success) {
+            verified = true;
+            isMsg91Verified = true; // Mark as MSG91 verified
+            console.log('✅ MSG91 OTP verified successfully');
+            
+            // Now get login token from backend - send msg91Verified flag to bypass OTP comparison
+            if (isAdminLogin) {
+              console.log('📤 Sending admin login verification with msg91Verified=true');
+              verifyResponse = await authAPI.verifyAdminLoginOTP({
+                phone: cleanedPhoneForVerify,
+                otp: otpCode.trim(),
+                msg91Verified: true // Tell backend MSG91 SDK already verified
+              });
+            } else {
+              try {
+                console.log('📤 Sending member login verification with msg91Verified=true');
+                verifyResponse = await authAPI.verifyLoginOTP({ 
+                  phone: cleanedPhoneForVerify,
+                  otp: otpCode.trim(),
+                  msg91Verified: true // Tell backend MSG91 SDK already verified
+                });
+              } catch (memberError) {
+                const errorStatus = memberError.response?.status;
+                const errorMsg = memberError.response?.data?.error || memberError.response?.data?.message || '';
+                const isPurposeMismatch = errorMsg.includes('purpose mismatch') || errorMsg.includes('Invalid OTP');
+                const isNotFound = errorStatus === 404 || errorMsg.includes('not found');
+                
+                if (errorStatus === 404 || isPurposeMismatch || isNotFound) {
+                  console.log('📤 Retrying as admin login with msg91Verified=true');
+                  verifyResponse = await authAPI.verifyAdminLoginOTP({
+                    phone: cleanedPhoneForVerify,
+                    otp: otpCode.trim(),
+                    msg91Verified: true // Tell backend MSG91 SDK already verified
+                  });
+                  setIsAdminLogin(true);
+                } else {
+                  throw memberError;
+                }
+              }
+            }
+          } else {
+            console.warn('⚠️ MSG91 SDK verification failed:', msg91VerifyResult);
+          }
+        } catch (msg91Error) {
+          console.error('❌ MSG91 SDK verification error:', msg91Error);
+          // Continue to backend fallback
+        }
+      }
+
+      // Fallback to backend verification if MSG91 not used or failed
+      if (!verified || !verifyResponse) {
+        console.log('🔄 Falling back to backend OTP verification (msg91Verified=false)');
       if (isAdminLogin) {
         verifyResponse = await authAPI.verifyAdminLoginOTP({
           phone: cleanedPhoneForVerify,
@@ -227,9 +319,11 @@ export default function LoginScreen() {
             throw memberError;
           }
         }
+        }
+        verified = verifyResponse.data.success;
       }
 
-      if (verifyResponse.data.success) {
+      if (verified && verifyResponse && verifyResponse.data.success) {
         setOtpVerified(true);
         setShowOtpModal(false);
         
@@ -256,7 +350,7 @@ export default function LoginScreen() {
         Toast.show({
           type: 'error',
           text1: 'Invalid OTP',
-          text2: verifyResponse.data.message || 'Please enter the correct OTP',
+          text2: verifyResponse?.data?.message || 'Please enter the correct OTP',
         });
       }
     } catch (error) {
@@ -279,6 +373,36 @@ export default function LoginScreen() {
           text2: errorMsg,
         });
       }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Retry OTP using MSG91 SDK
+  const handleRetryOTP = async () => {
+    if (!msg91ReqId) {
+      // If no reqId, just resend OTP
+      await handleSendOTP(isAdminLogin);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const retryResult = await msg91RetryOTP(msg91ReqId);
+      if (retryResult.success) {
+        Toast.show({
+          type: 'success',
+          text1: 'OTP Resent',
+          text2: 'Please check your phone for the new OTP',
+        });
+      } else {
+        // Fallback to resend via backend
+        await handleSendOTP(isAdminLogin);
+      }
+    } catch (error) {
+      console.error('Retry OTP error:', error);
+      // Fallback to resend via backend
+      await handleSendOTP(isAdminLogin);
     } finally {
       setLoading(false);
     }
@@ -384,13 +508,13 @@ export default function LoginScreen() {
               </View>
               
               <TouchableOpacity
-                style={[styles.adminButton, (loading || phoneNumber.length !== 10) && styles.buttonDisabled]}
-                onPress={() => handleSendOTP(true)}
-                disabled={loading || phoneNumber.length !== 10}
+                style={styles.adminButton}
+                onPress={() => navigation.navigate('AdminLogin')}
+                disabled={loading}
               >
                 <Icon name="admin-panel-settings" size={22} color="#fff" style={{ marginRight: 10 }} />
                 <Text style={styles.adminButtonText}>
-                  {loading ? 'Sending Admin OTP...' : 'Login as Admin'}
+                  Login as Admin
                 </Text>
               </TouchableOpacity>
               
@@ -498,7 +622,7 @@ export default function LoginScreen() {
 
               <TouchableOpacity
                 style={styles.resendButton}
-                onPress={() => handleSendOTP(isAdminLogin)}
+                onPress={handleRetryOTP}
                 disabled={loading}
               >
                 <Text style={styles.resendText}>
@@ -529,8 +653,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 50,
     left: 20,
+    zIndex: 10,
     padding: 8,
-    backgroundColor: 'rgba(255,255,255,0.9)',
+    backgroundColor: 'rgba(255,255,255,0.2)',
     borderRadius: 20,
   },
   headerIcon: {

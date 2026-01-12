@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const path = require('path');
 const { query, transaction } = require('../config/database');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
@@ -20,11 +21,41 @@ router.get('/', async (req, res) => {
     };
 
     try {
-      const dbSettings = await query(
-        `SELECT * FROM payment_gateway_settings ORDER BY id DESC LIMIT 1`
+      // Try to get active payment gateway settings first
+      let dbSettings = [];
+      try {
+        dbSettings = await query(
+          `SELECT * FROM payment_gateway_settings 
+           WHERE active = 'Yes' 
+           ORDER BY updated_at DESC, id DESC 
+           LIMIT 1`
       );
-      if (dbSettings && Array.isArray(dbSettings) && dbSettings.length > 0) {
+      } catch (activeError) {
+        // Active column might not exist yet, get most recent
+        logger.info('Active column might not exist, getting most recent settings');
+      }
+      
+      // If no active settings found, get the most recent one
+      if (!dbSettings || dbSettings.length === 0) {
+        const recentSettings = await query(
+          `SELECT * FROM payment_gateway_settings ORDER BY updated_at DESC, id DESC LIMIT 1`
+        );
+        if (recentSettings && recentSettings.length > 0) {
+          settings = recentSettings[0];
+        }
+      } else {
         settings = dbSettings[0];
+      }
+      
+      // Convert file path to URL if it's a local file
+      if (settings.qr_code_url && !settings.qr_code_url.startsWith('http')) {
+        const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+        if (settings.qr_code_url.startsWith('/uploads/')) {
+          settings.qr_code_url = baseUrl + settings.qr_code_url;
+        } else if (settings.qr_code_url.startsWith('/')) {
+          const path = require('path');
+          settings.qr_code_url = baseUrl + '/uploads/images/' + path.basename(settings.qr_code_url);
+        }
       }
     } catch (tableError) {
       // Table might not exist yet, use defaults

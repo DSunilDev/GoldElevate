@@ -9,8 +9,8 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { LinearGradient } from 'react-native-linear-gradient';
+import { default as Icon } from 'react-native-vector-icons/MaterialIcons';
 import { adminAPI } from '../../config/api';
 import Toast from 'react-native-toast-message';
 import { formatCurrency, formatDate } from '../../utils/helpers';
@@ -286,6 +286,7 @@ const styles = StyleSheet.create({
   backButton: {
     padding: 8,
     marginRight: 10,
+    zIndex:10,
   },
   headerTitle: {
     fontSize: 20,

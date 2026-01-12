@@ -12,16 +12,14 @@ import com.facebook.react.config.ReactFeatureFlags;
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint;
 import com.facebook.react.defaults.DefaultReactNativeHost;
 import com.facebook.soloader.SoLoader;
-
-import expo.modules.ApplicationLifecycleDispatcher;
-import expo.modules.ReactNativeHostWrapper;
+import com.goldelevate.BuildConfig;
 
 import java.util.List;
 
 public class MainApplication extends Application implements ReactApplication {
 
   private final ReactNativeHost mReactNativeHost =
-    new ReactNativeHostWrapper(this, new DefaultReactNativeHost(this) {
+    new DefaultReactNativeHost(this) {
       @Override
       public boolean getUseDeveloperSupport() {
         return BuildConfig.DEBUG;
@@ -38,7 +36,7 @@ public class MainApplication extends Application implements ReactApplication {
 
       @Override
       protected String getJSMainModuleName() {
-        return ".expo/.virtual-metro-entry";
+        return "index";
       }
 
       @Override
@@ -50,7 +48,7 @@ public class MainApplication extends Application implements ReactApplication {
       protected Boolean isHermesEnabled() {
         return BuildConfig.IS_HERMES_ENABLED;
       }
-  });
+    };
 
   @Override
   public ReactNativeHost getReactNativeHost() {
@@ -68,15 +66,15 @@ public class MainApplication extends Application implements ReactApplication {
       // If you opted-in for the New Architecture, we load the native entry point for this app.
       DefaultNewArchitectureEntryPoint.load();
     }
-    if (BuildConfig.DEBUG) {
-      ReactNativeFlipper.initializeFlipper(this, getReactNativeHost().getReactInstanceManager());
-    }
-    ApplicationLifecycleDispatcher.onApplicationCreate(this);
+    // ReactNativeFlipper is only available in debug builds
+    // Uncomment the following lines if you want to use Flipper in debug mode:
+    // if (BuildConfig.DEBUG) {
+    //   ReactNativeFlipper.initializeFlipper(this, getReactNativeHost().getReactInstanceManager());
+    // }
   }
 
   @Override
   public void onConfigurationChanged(@NonNull Configuration newConfig) {
     super.onConfigurationChanged(newConfig);
-    ApplicationLifecycleDispatcher.onConfigurationChanged(this, newConfig);
   }
 }

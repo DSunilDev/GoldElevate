@@ -8,8 +8,8 @@ import {
   RefreshControl,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { LinearGradient } from 'react-native-linear-gradient';
+import { default as Icon } from 'react-native-vector-icons/MaterialIcons';
 import { packagesAPI } from '../config/api';
 import Toast from 'react-native-toast-message';
 import { getCache, setCache, clearCache, CACHE_KEYS } from '../utils/cache';
@@ -181,11 +181,8 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   backButton: {
-    position: 'absolute',
-    top: 50,
-    left: 20,
-    zIndex: 10,
     padding: 8,
+    zIndex: 10,
   },
   headerTitle: {
     fontSize: 24,

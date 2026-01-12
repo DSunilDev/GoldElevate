@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
   Alert,
 } from 'react-native';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { default as Icon } from 'react-native-vector-icons/MaterialIcons';
 import { adminAPI } from '../../config/api';
 import Toast from 'react-native-toast-message';
 import { formatCurrency, formatDate } from '../../utils/helpers';
@@ -88,7 +88,7 @@ export default function AdminApplicationsScreen({ navigation }) {
         </Text>
 
         {applications.map((app) => (
-          <View key={app.signupid} style={styles.applicationCard}>
+          <View key={app.memberid} style={styles.applicationCard}>
             <View style={styles.applicationHeader}>
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>
@@ -97,10 +97,10 @@ export default function AdminApplicationsScreen({ navigation }) {
               </View>
               <View style={styles.applicationInfo}>
                 <Text style={styles.applicationName}>
-                  {app.firstname} {app.lastname}
+                  {app.firstname || ''} {app.lastname || ''}
                 </Text>
                 <Text style={styles.applicationId}>@{app.login || ''} • ID: {app.memberid || ''}</Text>
-                <Text style={styles.applicationEmail}>{app.email}</Text>
+                <Text style={styles.applicationEmail}>{app.email || app.phone || 'N/A'}</Text>
               </View>
               <View style={styles.statusBadge}>
                 <Text style={styles.statusText}>Pending</Text>
@@ -113,11 +113,13 @@ export default function AdminApplicationsScreen({ navigation }) {
                 <Text style={styles.detailLabel}>Package:</Text>
                 <Text style={styles.detailValue}>{app.package_name || 'N/A'}</Text>
               </View>
-              <View style={styles.detailRow}>
-                <Icon name="account-balance" size={16} color="#666" />
-                <Text style={styles.detailLabel}>Amount:</Text>
-                <Text style={styles.detailValue}>{formatCurrency(app.amount || 0)}</Text>
-              </View>
+              {app.amount && (
+                <View style={styles.detailRow}>
+                  <Icon name="account-balance" size={16} color="#666" />
+                  <Text style={styles.detailLabel}>Amount:</Text>
+                  <Text style={styles.detailValue}>{formatCurrency(app.amount || 0)}</Text>
+                </View>
+              )}
               <View style={styles.detailRow}>
                 <Icon name="calendar-today" size={16} color="#666" />
                 <Text style={styles.detailLabel}>Applied:</Text>
@@ -128,6 +130,13 @@ export default function AdminApplicationsScreen({ navigation }) {
                   <Icon name="receipt" size={16} color="#666" />
                   <Text style={styles.detailLabel}>Transaction ID:</Text>
                   <Text style={styles.detailValue} numberOfLines={1}>{app.transaction_id}</Text>
+                </View>
+              )}
+              {app.phone && (
+                <View style={styles.detailRow}>
+                  <Icon name="phone" size={16} color="#666" />
+                  <Text style={styles.detailLabel}>Phone:</Text>
+                  <Text style={styles.detailValue}>{app.phone}</Text>
                 </View>
               )}
             </View>
@@ -144,7 +153,7 @@ export default function AdminApplicationsScreen({ navigation }) {
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.approveButton}
-                onPress={() => handleApprove(app.signupid)}
+                onPress={() => handleApprove(app.memberid)}
               >
                 <Icon name="check" size={20} color="#28a745" />
                 <Text style={styles.approveButtonText}>Approve</Text>

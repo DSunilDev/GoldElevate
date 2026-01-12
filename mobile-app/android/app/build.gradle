@@ -8,15 +8,19 @@ def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
  * By default you don't need to apply any configuration, just uncomment the lines you need.
  */
 react {
-    entryFile = file(["node", "-e", "require('expo/scripts/resolveAppEntry')", projectRoot, "android", "absolute"].execute(null, rootDir).text.trim())
+    // Standard React Native entry file
+    entryFile = file("../../index.js")
     reactNativeDir = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
     hermesCommand = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/sdks/hermesc/%OS-BIN%/hermesc"
-    codegenDir = new File(["node", "--print", "require.resolve('@react-native/codegen/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
-
-    // Use Expo CLI to bundle the app, this ensures the Metro config
-    // works correctly with Expo projects.
-    cliFile = new File(["node", "--print", "require.resolve('@expo/cli')"].execute(null, rootDir).text.trim())
-    bundleCommand = "export:embed"
+    // Codegen is optional (only needed if newArchEnabled=true)
+    try {
+        def codegenPath = ["node", "--print", "try { require.resolve('@react-native/codegen/package.json'); } catch(e) { '' }"].execute(null, rootDir).text.trim()
+        if (codegenPath && !codegenPath.isEmpty()) {
+            codegenDir = new File(codegenPath).getParentFile().getAbsoluteFile()
+        }
+    } catch (Exception e) {
+        // Codegen not available, skip it
+    }
 
     /* Folders */
     //   The root of your project, i.e. where "package.json" lives. Default is '..'
@@ -178,3 +182,6 @@ dependencies {
 
 apply from: new File(["node", "--print", "require.resolve('@react-native-community/cli-platform-android/package.json')"].execute(null, rootDir).text.trim(), "../native_modules.gradle");
 applyNativeModulesAppBuildGradle(project)
+
+// Apply react-native-vector-icons
+apply from: "../../node_modules/react-native-vector-icons/fonts.gradle"

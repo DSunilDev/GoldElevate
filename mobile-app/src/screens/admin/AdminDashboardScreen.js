@@ -7,8 +7,8 @@ import {
   RefreshControl,
   TouchableOpacity,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { LinearGradient } from 'react-native-linear-gradient';
+import { default as Icon } from 'react-native-vector-icons/MaterialIcons';
 import { adminAPI } from '../../config/api';
 import Toast from 'react-native-toast-message';
 import { showErrorToast } from '../../utils/errorHandler';

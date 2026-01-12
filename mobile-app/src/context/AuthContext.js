@@ -10,46 +10,57 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(false); // Start as false for instant load
 
   useEffect(() => {
+    console.log('🔐 AuthProvider initializing...');
     let isMounted = true;
     let loadingTimeout;
     
-    // Immediately set loading to false for faster startup (check auth in background)
-    setLoading(false);
-    setAuthStateSetters({ setUser, setIsAuthenticated });
-    
-    const initializeAuth = async () => {
-      try {
-        // Quick check with very short timeout to prevent hanging
-        const authPromise = checkAuth();
-        const timeoutPromise = new Promise((resolve) => {
-          setTimeout(() => resolve(), 200); // Very short timeout - 200ms
-        });
-        
-        await Promise.race([authPromise, timeoutPromise]);
-      } catch (error) {
-        console.error('Auth initialization error:', error);
-        // On error, just proceed without auth - user can login
-      }
-    };
-    
-    // Start initialization in background (don't block)
-    initializeAuth().catch(() => {
-      // Ignore errors - already handled
-    });
-    
-    // Safety timeout - ensure we never hang
-    loadingTimeout = setTimeout(() => {
-      if (isMounted) {
-        setLoading(false);
-      }
-    }, 500); // Max 500ms - very short
-    
-    return () => {
-      isMounted = false;
-      if (loadingTimeout) {
-        clearTimeout(loadingTimeout);
-      }
-    };
+    try {
+      // Immediately set loading to false for faster startup (check auth in background)
+      setLoading(false);
+      setAuthStateSetters({ setUser, setIsAuthenticated });
+      console.log('✅ AuthProvider setters configured');
+      
+      const initializeAuth = async () => {
+        try {
+          console.log('🔍 Starting auth check...');
+          // Quick check with very short timeout to prevent hanging
+          const authPromise = checkAuth();
+          const timeoutPromise = new Promise((resolve) => {
+            setTimeout(() => resolve(), 200); // Very short timeout - 200ms
+          });
+          
+          await Promise.race([authPromise, timeoutPromise]);
+          console.log('✅ Auth check completed');
+        } catch (error) {
+          console.error('❌ Auth initialization error:', error);
+          // On error, just proceed without auth - user can login
+        }
+      };
+      
+      // Start initialization in background (don't block)
+      initializeAuth().catch((err) => {
+        console.error('❌ Auth initialization promise rejected:', err);
+        // Ignore errors - already handled
+      });
+      
+      // Safety timeout - ensure we never hang
+      loadingTimeout = setTimeout(() => {
+        if (isMounted) {
+          console.log('⏱️ Auth timeout reached, setting loading to false');
+          setLoading(false);
+        }
+      }, 500); // Max 500ms - very short
+      
+      return () => {
+        isMounted = false;
+        if (loadingTimeout) {
+          clearTimeout(loadingTimeout);
+        }
+      };
+    } catch (error) {
+      console.error('❌ AuthProvider useEffect error:', error);
+      setLoading(false);
+    }
   }, []);
 
   const checkAuth = async () => {
@@ -227,8 +238,14 @@ export const AuthProvider = ({ children }) => {
       // Always clear local storage and state
       await AsyncStorage.removeItem('authToken');
       await AsyncStorage.removeItem('userData');
+      await AsyncStorage.removeItem('token'); // Clear legacy token key
+      await AsyncStorage.removeItem('user'); // Clear legacy user key
       setUser(null);
       setIsAuthenticated(false);
+      
+      // Note: Navigation will be handled by App.js AuthNavigator
+      // which automatically switches to unauthenticated screens
+      // when isAuthenticated becomes false
     }
   };
 

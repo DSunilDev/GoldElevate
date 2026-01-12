@@ -6,19 +6,20 @@ import {
   ScrollView,
   TouchableOpacity,
   RefreshControl,
-  Share,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { referralsAPI } from '../config/api';
 import Toast from 'react-native-toast-message';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import { formatDate } from '../utils/helpers';
+import Icon from 'react-native-vector-icons/MaterialIcons';
+import { LinearGradient } from 'react-native-linear-gradient';
+import { formatDate, copyToClipboard } from '../utils/helpers';
 // Clipboard import removed - using native web APIs directly
-import * as Sharing from 'expo-sharing';
+import Share from 'react-native-share';
 import { useAuth } from '../context/AuthContext';
 import { showErrorToast, showSuccessToast, showInfoToast } from '../utils/errorHandler';
 
 export default function ReferralsScreen() {
+  const navigation = useNavigation();
   const { user } = useAuth();
   const [referrals, setReferrals] = useState([]);
   const [stats, setStats] = useState({ total: 0, active: 0, earnings: 0 });
@@ -137,25 +138,13 @@ export default function ReferralsScreen() {
 
   const handleCopyLink = async () => {
     if (referralLink) {
-      try {
-        // For web, use navigator clipboard API directly
-        if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
-          await navigator.clipboard.writeText(referralLink);
-        } else if (typeof document !== 'undefined') {
-          // Fallback for older browsers
-          const textArea = document.createElement('textarea');
-          textArea.value = referralLink;
-          textArea.style.position = 'fixed';
-          textArea.style.opacity = '0';
-          document.body.appendChild(textArea);
-          textArea.select();
-          document.execCommand('copy');
-          document.body.removeChild(textArea);
-        }
+      const success = await copyToClipboard(referralLink, (toastData) => {
+        Toast.show(toastData);
+      });
+      if (success) {
         showSuccessToast('Referral link copied to clipboard', 'Copied!');
-      } catch (error) {
-        console.error('Copy failed:', error);
-        showErrorToast(error, 'Failed to copy link');
+      } else {
+        showErrorToast(new Error('Failed to copy'), 'Failed to copy link');
       }
     }
   };
@@ -163,14 +152,10 @@ export default function ReferralsScreen() {
   const handleShareLink = async () => {
     if (referralLink) {
       try {
-        const isAvailable = await Sharing.isAvailableAsync();
-        if (isAvailable) {
-          await Sharing.shareAsync(referralLink, {
+        await Share.open({
             message: `Join GoldElevate and start earning! Use my referral link: ${referralLink}`,
+          title: 'Share Referral Link',
           });
-        } else {
-          showInfoToast('Please copy the link manually', 'Sharing not available');
-        }
       } catch (error) {
         showErrorToast(error, 'Failed to share link');
       }
@@ -186,9 +171,18 @@ export default function ReferralsScreen() {
         colors={['#D4AF37', '#B8941F']}
         style={styles.header}
       >
-        <Text style={styles.headerIcon}>👥</Text>
-        <Text style={styles.headerTitle}>My Referrals</Text>
-        <Text style={styles.headerSubtitle}>Track your referral network</Text>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backButton}
+        >
+          <Icon name="arrow-back" size={24} color="#fff" />
+        </TouchableOpacity>
+        <View style={styles.headerContent}>
+          <Text style={styles.headerIcon}>👥</Text>
+          <Text style={styles.headerTitle}>My Referrals</Text>
+          <Text style={styles.headerSubtitle}>Track your referral network</Text>
+        </View>
+        <View style={styles.placeholder} />
       </LinearGradient>
 
       <View style={styles.statsRow}>
@@ -302,6 +296,16 @@ const styles = StyleSheet.create({
     paddingTop: 50,
     borderBottomLeftRadius: 30,
     borderBottomRightRadius: 30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  backButton: {
+    padding: 8,
+    zIndex: 10,
+  },
+  headerContent: {
+    flex: 1,
     alignItems: 'center',
   },
   headerIcon: {
@@ -318,6 +322,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#fff',
     opacity: 0.9,
+  },
+  placeholder: {
+    width: 40,
   },
   statsRow: {
     flexDirection: 'row',

@@ -1,3 +1,18 @@
+-- ============================================
+-- GoldElevate Database Initialization Script
+-- ============================================
+-- This script creates all tables, indexes, procedures, triggers, and views
+-- Includes all migrations applied up to date
+-- Includes test users: testuser and testadmin
+-- ============================================
+
+-- Disable foreign key checks temporarily
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- ============================================
+-- DROP EXISTING OBJECTS
+-- ============================================
+
 DROP PROCEDURE IF EXISTS `proc_leave`;
 DROP PROCEDURE IF EXISTS `proc_join`;
 DROP PROCEDURE IF EXISTS `proc_member`;
@@ -37,6 +52,16 @@ DROP TABLE IF EXISTS `def_match`;
 DROP TABLE IF EXISTS `def_direct`;
 DROP TABLE IF EXISTS `def_type`;
 DROP TABLE IF EXISTS `admin`;
+
+DROP TABLE IF EXISTS `payment_gateway_settings`;
+DROP TABLE IF EXISTS `upi_payment`;
+
+-- Re-enable foreign key checks
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- ============================================
+-- CREATE TABLES
+-- ============================================
 
 CREATE TABLE IF NOT EXISTS `admin` (
   `adminid` set("ROOT","ACCOUNTING","SUPPORT","MARKETING") default "SUPPORT",
@@ -177,13 +202,19 @@ CREATE TABLE IF NOT EXISTS `member_signup` (
   KEY `sidlogin` (`sidlogin`,`signupstatus`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
+-- Member table with all migrations applied:
+-- - typeid is nullable (migration: make_typeid_nullable.sql)
+-- - phone column added (migration: 03_add_phone_column.sql)
+-- - signup_type column added (migration: 05_add_signup_type.sql)
 CREATE TABLE IF NOT EXISTS `member` (
   `memberid` int(10) unsigned NOT NULL DEFAULT '0',
   `login` VARCHAR(16) NOT NULL DEFAULT '',
   `passwd` VARCHAR(255) NOT NULL DEFAULT '',
+  `signup_type` enum('otp', 'password') DEFAULT 'password',
   `active` enum('Yes','No','Wait','First') NOT NULL DEFAULT 'First',
-  `typeid` tinyint(3) unsigned NOT NULL,
+  `typeid` tinyint(3) unsigned NULL,
   `email` VARCHAR(255) NOT NULL DEFAULT '',
+  `phone` VARCHAR(10) NULL,
   `sid` int(11) unsigned NOT NULL DEFAULT '1',
   `pid` int(11) unsigned NOT NULL DEFAULT '1',
   `top` int(11) unsigned NOT NULL DEFAULT '1',
@@ -210,12 +241,14 @@ CREATE TABLE IF NOT EXISTS `member` (
   `moment` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`memberid`),
   UNIQUE KEY `login` (`login`),
+  UNIQUE KEY `phone` (`phone`),
   KEY `sid` (`sid`),
   KEY `pid` (`pid`),
   KEY `top` (`top`),
   KEY `created` (`created`,`active`),
   KEY `typeid` (`typeid`),
   KEY `affiliate` (`affiliate`),
+  KEY `idx_signup_type` (`signup_type`),
   CONSTRAINT `member_ibfk_1` FOREIGN KEY (`typeid`) REFERENCES `def_type` (`typeid`) ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
@@ -251,11 +284,19 @@ CREATE TABLE IF NOT EXISTS `member_trigger` (
   CONSTRAINT `member_trigger_ibfk_1` FOREIGN KEY (`memberid`) REFERENCES `member` (`memberid`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
+-- Member_withdraw table with payment gateway fields (migration: 04_payment_gateway.sql)
 CREATE TABLE IF NOT EXISTS `member_withdraw` (
   `id` INT(11) NOT NULL AUTO_INCREMENT,
   `memberid` INT(10) unsigned NOT NULL DEFAULT '0',
   `amount` DECIMAL(10,2) NOT NULL DEFAULT '0.00',
+  `payment_method` ENUM('Bank','UPI') DEFAULT 'Bank',
+  `account_number` VARCHAR(50) DEFAULT NULL,
+  `ifsc_code` VARCHAR(20) DEFAULT NULL,
+  `upi_id` VARCHAR(100) DEFAULT NULL,
+  `bank_name` VARCHAR(100) DEFAULT NULL,
+  `account_holder_name` VARCHAR(255) DEFAULT NULL,
   `transax_id` VARCHAR(255) NOT NULL,
+  `admin_transaction_id` VARCHAR(255) DEFAULT NULL,
   `memo` VARCHAR(255) NOT NULL,
   `status` ENUM('apply','processing','finished','pending','reject') NOT NULL DEFAULT 'apply',
   `created` DATETIME DEFAULT NULL,
@@ -290,6 +331,7 @@ CREATE TABLE IF NOT EXISTS `family_leftright` (
   CONSTRAINT `leftright_ibfk_1` FOREIGN KEY (`memberid`) REFERENCES `member` (`memberid`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
+-- Sale table with activated_at column (migration: add_activated_at_to_sale.sql)
 CREATE TABLE IF NOT EXISTS `sale` (
   `saleid` int(11) NOT NULL AUTO_INCREMENT,
   `memberid` int(10) unsigned DEFAULT NULL,
@@ -304,6 +346,7 @@ CREATE TABLE IF NOT EXISTS `sale` (
   `trackingid` VARCHAR(255) DEFAULT NULL,
   `shipping` double DEFAULT '0',
   `active` enum('Yes','No','Wait','First') NOT NULL DEFAULT 'Wait',
+  `activated_at` DATETIME NULL,
   `manager` VARCHAR(255) DEFAULT NULL,
   `created` datetime DEFAULT NULL,
   `moment` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -361,6 +404,27 @@ CREATE TABLE IF NOT EXISTS `upi_payment` (
   KEY `upi_reference` (`upi_reference`),
   CONSTRAINT `upi_payment_ibfk_1` FOREIGN KEY (`saleid`) REFERENCES `sale` (`saleid`) ON UPDATE CASCADE,
   CONSTRAINT `upi_payment_ibfk_2` FOREIGN KEY (`memberid`) REFERENCES `member` (`memberid`) ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- Payment gateway settings table (migration: 04_payment_gateway.sql, 06_add_active_to_payment_gateway.sql)
+CREATE TABLE IF NOT EXISTS `payment_gateway_settings` (
+  `id` INT(11) NOT NULL AUTO_INCREMENT,
+  `upi_id` VARCHAR(255) DEFAULT NULL,
+  `qr_code_url` VARCHAR(500) DEFAULT NULL,
+  `qr_code_base64` TEXT DEFAULT NULL,
+  `bank_account_number` VARCHAR(50) DEFAULT NULL,
+  `bank_ifsc_code` VARCHAR(20) DEFAULT NULL,
+  `bank_name` VARCHAR(255) DEFAULT NULL,
+  `account_holder_name` VARCHAR(255) DEFAULT NULL,
+  `gpay_merchant_id` VARCHAR(255) DEFAULT NULL,
+  `phonepe_merchant_id` VARCHAR(255) DEFAULT NULL,
+  `gpay_enabled` ENUM('Yes','No') DEFAULT 'Yes',
+  `phonepe_enabled` ENUM('Yes','No') DEFAULT 'Yes',
+  `active` ENUM('Yes', 'No') DEFAULT 'No',
+  `updated_by` VARCHAR(255) DEFAULT NULL,
+  `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 CREATE TABLE IF NOT EXISTS `income` (
@@ -439,6 +503,88 @@ CREATE TABLE IF NOT EXISTS `tt_post` (
   CONSTRAINT `ttpost_ibfk_1` FOREIGN KEY (`subjectid`) REFERENCES `tt` (`subjectid`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
+-- ============================================
+-- CREATE INDEXES (from 02_performance_indexes.sql)
+-- ============================================
+
+-- Member table indexes
+CREATE INDEX IF NOT EXISTS idx_member_active ON member(active);
+CREATE INDEX IF NOT EXISTS idx_member_typeid ON member(typeid);
+CREATE INDEX IF NOT EXISTS idx_member_sid ON member(sid);
+CREATE INDEX IF NOT EXISTS idx_member_pid ON member(pid);
+CREATE INDEX IF NOT EXISTS idx_member_login ON member(login);
+CREATE INDEX IF NOT EXISTS idx_member_created ON member(created);
+CREATE INDEX IF NOT EXISTS idx_member_active_typeid ON member(active, typeid);
+CREATE INDEX IF NOT EXISTS idx_member_active_typeid_sid ON member(active, typeid, sid);
+
+-- Sale table indexes
+CREATE INDEX IF NOT EXISTS idx_sale_memberid ON sale(memberid);
+CREATE INDEX IF NOT EXISTS idx_sale_signuptype ON sale(signuptype);
+CREATE INDEX IF NOT EXISTS idx_sale_paystatus ON sale(paystatus);
+CREATE INDEX IF NOT EXISTS idx_sale_created ON sale(created);
+CREATE INDEX IF NOT EXISTS idx_sale_typeid ON sale(typeid);
+CREATE INDEX IF NOT EXISTS idx_sale_memberid_signuptype ON sale(memberid, signuptype);
+CREATE INDEX IF NOT EXISTS idx_sale_paystatus_signuptype ON sale(paystatus, signuptype);
+CREATE INDEX IF NOT EXISTS idx_sale_memberid_paystatus_signuptype ON sale(memberid, paystatus, signuptype);
+
+-- Income table indexes
+CREATE INDEX IF NOT EXISTS idx_income_memberid ON income(memberid);
+CREATE INDEX IF NOT EXISTS idx_income_classify ON income(classify);
+CREATE INDEX IF NOT EXISTS idx_income_weekid ON income(weekid);
+CREATE INDEX IF NOT EXISTS idx_income_paystatus ON income(paystatus);
+CREATE INDEX IF NOT EXISTS idx_income_memberid_classify ON income(memberid, classify);
+CREATE INDEX IF NOT EXISTS idx_income_weekid_classify ON income(weekid, classify);
+
+-- Income_amount table indexes
+CREATE INDEX IF NOT EXISTS idx_income_amount_memberid ON income_amount(memberid);
+CREATE INDEX IF NOT EXISTS idx_income_amount_bonusType ON income_amount(bonusType);
+CREATE INDEX IF NOT EXISTS idx_income_amount_status ON income_amount(status);
+CREATE INDEX IF NOT EXISTS idx_income_amount_weekid ON income_amount(weekid);
+CREATE INDEX IF NOT EXISTS idx_income_amount_created ON income_amount(created);
+CREATE INDEX IF NOT EXISTS idx_income_amount_memberid_status ON income_amount(memberid, status);
+CREATE INDEX IF NOT EXISTS idx_income_amount_bonusType_status ON income_amount(bonusType, status);
+CREATE INDEX IF NOT EXISTS idx_income_amount_memberid_bonusType_status ON income_amount(memberid, bonusType, status);
+
+-- Income_ledger table indexes
+CREATE INDEX IF NOT EXISTS idx_income_ledger_memberid ON income_ledger(memberid);
+CREATE INDEX IF NOT EXISTS idx_income_ledger_status ON income_ledger(status);
+CREATE INDEX IF NOT EXISTS idx_income_ledger_weekid ON income_ledger(weekid);
+CREATE INDEX IF NOT EXISTS idx_income_ledger_created ON income_ledger(created);
+CREATE INDEX IF NOT EXISTS idx_income_ledger_memberid_status ON income_ledger(memberid, status);
+
+-- UPI Payment table indexes
+CREATE INDEX IF NOT EXISTS idx_upi_payment_memberid ON upi_payment(memberid);
+CREATE INDEX IF NOT EXISTS idx_upi_payment_status ON upi_payment(status);
+CREATE INDEX IF NOT EXISTS idx_upi_payment_saleid ON upi_payment(saleid);
+CREATE INDEX IF NOT EXISTS idx_upi_payment_transaction_id ON upi_payment(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_upi_payment_upi_reference ON upi_payment(upi_reference);
+CREATE INDEX IF NOT EXISTS idx_upi_payment_created ON upi_payment(created);
+CREATE INDEX IF NOT EXISTS idx_upi_payment_memberid_status ON upi_payment(memberid, status);
+
+-- Member_signup table indexes
+CREATE INDEX IF NOT EXISTS idx_member_signup_memberid ON member_signup(memberid);
+CREATE INDEX IF NOT EXISTS idx_member_signup_signupstatus ON member_signup(signupstatus);
+CREATE INDEX IF NOT EXISTS idx_member_signup_sidlogin ON member_signup(sidlogin);
+CREATE INDEX IF NOT EXISTS idx_member_signup_signuptime ON member_signup(signuptime);
+CREATE INDEX IF NOT EXISTS idx_member_signup_packageid ON member_signup(packageid);
+
+-- Def_type table indexes
+CREATE INDEX IF NOT EXISTS idx_def_type_price ON def_type(price);
+CREATE INDEX IF NOT EXISTS idx_def_type_daily_return ON def_type(daily_return);
+
+-- Def_direct table indexes
+CREATE INDEX IF NOT EXISTS idx_def_direct_typeid ON def_direct(typeid);
+CREATE INDEX IF NOT EXISTS idx_def_direct_whoid ON def_direct(whoid);
+CREATE INDEX IF NOT EXISTS idx_def_direct_typeid_whoid ON def_direct(typeid, whoid);
+
+-- Product_package table indexes
+CREATE INDEX IF NOT EXISTS idx_product_package_typeid ON product_package(typeid);
+CREATE INDEX IF NOT EXISTS idx_product_package_packageid ON product_package(packageid);
+
+-- ============================================
+-- CREATE PROCEDURES
+-- ============================================
+
 DELIMITER //
 CREATE PROCEDURE `proc_member`(
 IN i_login VARCHAR(255),
@@ -490,17 +636,6 @@ BEGIN
     INNER JOIN def_type t USING (typeid)
     WHERE m.active IN ("Yes","Wait", "First")
     AND m.login=i_login;
-END//
-DELIMITER ;
-
-DELIMITER //
-CREATE TRIGGER `trig_member` AFTER UPDATE ON `member` FOR EACH ROW BEGIN
-  IF (((NEW.milel <=> OLD.milel) = 0) || ((NEW.countl <=> OLD.countl) = 0)) THEN
-    INSERT INTO member_trigger (memberid, leg, new_mile, new_count, old_mile, old_count, created) VALUES (NEW.memberid, 'L', NEW.milel, NEW.countl, OLD.milel, OLD.countl, NOW());
-  END IF;
-  IF (((NEW.miler <=> OLD.miler) = 0) || ((NEW.countr <=> OLD.countr) = 0)) THEN
-    INSERT INTO member_trigger (memberid, leg, new_mile, new_count, old_mile, old_count, created) VALUES (NEW.memberid, 'R', NEW.miler, NEW.countr, OLD.miler, OLD.countr, NOW());
-  END IF;
 END//
 DELIMITER ;
 
@@ -566,6 +701,69 @@ BEGIN
 END~
 DELIMITER ;
 
+-- ============================================
+-- CREATE TRIGGERS
+-- ============================================
+
+DELIMITER //
+CREATE TRIGGER `trig_member` AFTER UPDATE ON `member` FOR EACH ROW BEGIN
+  IF (((NEW.milel <=> OLD.milel) = 0) || ((NEW.countl <=> OLD.countl) = 0)) THEN
+    INSERT INTO member_trigger (memberid, leg, new_mile, new_count, old_mile, old_count, created) VALUES (NEW.memberid, 'L', NEW.milel, NEW.countl, OLD.milel, OLD.countl, NOW());
+  END IF;
+  IF (((NEW.miler <=> OLD.miler) = 0) || ((NEW.countr <=> OLD.countr) = 0)) THEN
+    INSERT INTO member_trigger (memberid, leg, new_mile, new_count, old_mile, old_count, created) VALUES (NEW.memberid, 'R', NEW.miler, NEW.countr, OLD.miler, OLD.countr, NOW());
+  END IF;
+END//
+DELIMITER ;
+
+-- ============================================
+-- CREATE VIEWS
+-- ============================================
+
 CREATE VIEW `view_balance` AS select `income_ledger`.`memberid` AS `memberid`,max(`income_ledger`.`ledgerid`) AS `ledgerid` from `income_ledger` group by `income_ledger`.`memberid`;
 
 CREATE VIEW `view_sdownlines` AS select `s`.`memberid` AS `memberid`,max(`s`.`typeid`) AS `typeid`,max(`s`.`active`) AS `active`,count(0) AS `c` from ((`member` `m` join `member` `s` on((`m`.`sid` = `s`.`memberid`))) join `def_type` `t` on((`s`.`typeid` = `t`.`typeid`))) where (`m`.`active` = 'Yes') group by `s`.`memberid`;
+
+-- ============================================
+-- INSERT TEST DATA
+-- ============================================
+
+-- Insert test admin: testadmin / admin123
+-- Password: SHA1(CONCAT('testadmin', 'admin123'))
+INSERT INTO `admin` (`adminid`, `login`, `passwd`, `status`, `created`)
+VALUES ('ROOT', 'testadmin', SHA1(CONCAT('testadmin', 'admin123')), 'Yes', NOW())
+ON DUPLICATE KEY UPDATE `passwd` = SHA1(CONCAT('testadmin', 'admin123'));
+
+-- Insert test member: testuser / testpass123
+-- Password: SHA1(CONCAT('testuser', 'testpass123'))
+-- Note: Since typeid is nullable, we can insert without a def_type entry
+-- If you have def_type data, you can set typeid to an existing typeid value
+-- For now, we'll insert with typeid = NULL (user can purchase a package later)
+
+-- Get the next available memberid
+SET @next_memberid = (SELECT COALESCE(MAX(memberid), 0) + 1 FROM `member`);
+
+-- Insert test user if it doesn't exist
+INSERT INTO `member` (`memberid`, `login`, `passwd`, `signup_type`, `active`, `typeid`, `email`, `phone`, `firstname`, `lastname`, `sid`, `pid`, `top`, `leg`, `reward_points`, `created`)
+SELECT 
+  @next_memberid as memberid,
+  'testuser' as login,
+  SHA1(CONCAT('testuser', 'testpass123')) as passwd,
+  'password' as signup_type,
+  'Yes' as active,
+  NULL as typeid,  -- NULL since user hasn't purchased a package yet
+  'test@example.com' as email,
+  '9999999999' as phone,
+  'Test' as firstname,
+  'User' as lastname,
+  1 as sid,
+  1 as pid,
+  1 as top,
+  'L' as leg,
+  150 as reward_points,
+  NOW() as created
+WHERE NOT EXISTS (SELECT 1 FROM `member` WHERE `login` = 'testuser');
+
+-- ============================================
+-- END OF INIT SCRIPT
+-- ============================================

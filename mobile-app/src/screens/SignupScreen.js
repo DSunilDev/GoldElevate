@@ -13,12 +13,13 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { LinearGradient } from 'react-native-linear-gradient';
+import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useAuth } from '../context/AuthContext';
 import Toast from 'react-native-toast-message';
-import { authAPI } from '../config/api';
-import * as ImagePicker from 'expo-image-picker';
+import { authAPI, memberAPI } from '../config/api';
+import { launchImageLibrary, request } from 'react-native-image-picker';
+import { sendOTP as msg91SendOTP, verifyOTP as msg91VerifyOTP, retryOTP as msg91RetryOTP } from '../utils/msg91SDK';
 
 export default function SignupScreen() {
   const navigation = useNavigation();
@@ -35,24 +36,103 @@ export default function SignupScreen() {
   const [userPhoto, setUserPhoto] = useState(null);
   const [termsAccepted, setTermsAccepted] = useState(false);
   
+  // Referral fields
+  const [referralCode, setReferralCode] = useState('');
+  const [sponsorId, setSponsorId] = useState('');
+  const [referralCodeEditable, setReferralCodeEditable] = useState(true);
+  const [sponsorIdEditable, setSponsorIdEditable] = useState(false);
+  const [referralVerificationStatus, setReferralVerificationStatus] = useState(null); // null, 'valid', 'invalid', 'verifying'
+  const [referrerName, setReferrerName] = useState('');
+  
   // UI state
   const [signupMethod, setSignupMethod] = useState('otp'); // 'otp' or 'password'
   const [loading, setLoading] = useState(false);
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [otpCode, setOtpCode] = useState('');
   const [otpVerified, setOtpVerified] = useState(false);
+  const [msg91ReqId, setMsg91ReqId] = useState(null); // Store MSG91 request ID
+
+  // Extract referral code and sponsor ID from URL params on mount
+  React.useEffect(() => {
+    const ref = route.params?.ref;
+    const sponsorid = route.params?.sponsorid;
+    
+    if (ref && sponsorid) {
+      // Referral link used - auto-fill and make uneditable
+      setReferralCode(ref);
+      setSponsorId(String(sponsorid));
+      setReferralCodeEditable(false);
+      setSponsorIdEditable(false);
+      // Verify the referral code
+      verifyReferralCode(ref);
+    }
+  }, [route.params]);
+
+  // Extract member ID from referral code (phone+memberid format)
+  const extractMemberIdFromCode = (code) => {
+    if (!code || code.length < 11) return null; // Minimum: 10 digit phone + 1 digit member ID
+    
+    // Try to find member ID by checking if code matches phone+memberid format
+    // We'll verify this with the backend, but for now, extract potential member ID
+    // Since phone is 10 digits, member ID should be everything after position 10
+    const potentialMemberId = code.substring(10);
+    return potentialMemberId || null;
+  };
+
+  // Verify referral code with backend
+  const verifyReferralCode = async (code) => {
+    if (!code || code.trim().length === 0) {
+      setReferralVerificationStatus(null);
+      setReferrerName('');
+      return;
+    }
+
+    setReferralVerificationStatus('verifying');
+    
+    try {
+      const response = await memberAPI.verifyReferralCode(code);
+      
+      if (response.data.success && response.data.valid) {
+        const memberData = response.data.data;
+        setSponsorId(String(memberData.memberid));
+        setReferrerName(`${memberData.firstname || ''} ${memberData.lastname || ''}`.trim());
+        setReferralVerificationStatus('valid');
+        setSponsorIdEditable(false); // Make member ID uneditable once verified
+      } else {
+        setReferralVerificationStatus('invalid');
+        setReferrerName('');
+        setSponsorId('');
+      }
+    } catch (error) {
+      console.error('Referral code verification error:', error);
+      setReferralVerificationStatus('invalid');
+      setReferrerName('');
+      setSponsorId('');
+    }
+  };
+
+  // Handle referral code input change
+  const handleReferralCodeChange = (text) => {
+    setReferralCode(text);
+    setReferralVerificationStatus(null);
+    setReferrerName('');
+    setSponsorId('');
+    
+    // If code is long enough (at least 11 chars for phone+memberid), try to extract member ID
+    if (text.length >= 11) {
+      const extractedMemberId = extractMemberIdFromCode(text);
+      if (extractedMemberId) {
+        setSponsorId(extractedMemberId);
+        setSponsorIdEditable(false); // Make uneditable once extracted
+        // Verify the code
+        verifyReferralCode(text);
+      }
+    }
+  };
 
   // Request permissions for image picker
   const requestImagePermissions = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Toast.show({
-        type: 'error',
-        text1: 'Permission Required',
-        text2: 'Please grant camera roll permissions to upload images',
-      });
-      return false;
-    }
+    // react-native-image-picker handles permissions automatically
     return true;
   };
 
@@ -62,18 +142,21 @@ export default function SignupScreen() {
     if (!hasPermission) return;
 
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [4, 3],
+      launchImageLibrary(
+        {
+          mediaType: 'photo',
         quality: 0.8,
-        base64: true,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        const base64 = `data:image/jpeg;base64,${result.assets[0].base64}`;
+          includeBase64: true,
+        },
+        (response) => {
+          if (response.didCancel || response.errorCode) {
+            return;
+          }
+          if (response.assets && response.assets[0]) {
+            const asset = response.assets[0];
+            const base64 = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : null;
         setIdProof({
-          uri: result.assets[0].uri,
+              uri: asset.uri,
           base64: base64,
           type: 'id_proof',
         });
@@ -83,6 +166,8 @@ export default function SignupScreen() {
           text2: 'ID proof image selected',
         });
       }
+        }
+      );
     } catch (error) {
       Toast.show({
         type: 'error',
@@ -98,18 +183,21 @@ export default function SignupScreen() {
     if (!hasPermission) return;
 
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [1, 1],
+      launchImageLibrary(
+        {
+          mediaType: 'photo',
         quality: 0.8,
-        base64: true,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        const base64 = `data:image/jpeg;base64,${result.assets[0].base64}`;
+          includeBase64: true,
+        },
+        (response) => {
+          if (response.didCancel || response.errorCode) {
+            return;
+          }
+          if (response.assets && response.assets[0]) {
+            const asset = response.assets[0];
+            const base64 = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : null;
         setUserPhoto({
-          uri: result.assets[0].uri,
+              uri: asset.uri,
           base64: base64,
           type: 'user_photo',
         });
@@ -119,6 +207,8 @@ export default function SignupScreen() {
           text2: 'Photo selected',
         });
       }
+        }
+      );
     } catch (error) {
       Toast.show({
         type: 'error',
@@ -208,57 +298,78 @@ export default function SignupScreen() {
     return true;
   };
 
-  // Send OTP for signup
+  // Send OTP for signup using MSG91 SDK
   const handleSendOTP = async () => {
     if (!validateForm()) return;
 
     setLoading(true);
     setOtpCode('');
+    setMsg91ReqId(null);
+
     try {
-      const response = await authAPI.sendOTP({ phone: phoneNumber });
-      if (response.data.success) {
-        setShowOtpModal(true);
-        if (response.data.otp) {
+      // First, check if phone is already registered (backend validation)
+      try {
+        const checkResponse = await authAPI.sendOTP({ phone: phoneNumber });
+        // If phone is already registered, backend will return error
+      } catch (checkError) {
+        const errorMsg = checkError.response?.data?.message || checkError.response?.data?.error || '';
+        if (errorMsg.includes('already registered') || errorMsg.includes('already exists')) {
           Toast.show({
-            type: 'info',
-            text1: 'OTP Generated',
-            text2: `Enter OTP: ${response.data.otp}`,
-            visibilityTime: 10000,
+            type: 'error',
+            text1: 'Phone Already Registered',
+            text2: 'This phone number is already registered. Please sign in instead.',
+            visibilityTime: 5000,
           });
-          console.log('🔑 OTP for signup:', response.data.otp);
+          setLoading(false);
+          return;
         }
+      }
+
+      // Try MSG91 SDK first, fallback to backend if SDK fails
+      console.log('[Signup] Attempting to send OTP via MSG91 SDK for phone:', phoneNumber);
+      const msg91Result = await msg91SendOTP(phoneNumber);
+      
+      if (msg91Result.success && msg91Result.reqId) {
+        setMsg91ReqId(msg91Result.reqId);
+        setShowOtpModal(true);
         Toast.show({
           type: 'success',
-          text1: 'OTP Generated',
-          text2: 'Please enter the OTP',
+          text1: 'OTP Sent',
+          text2: 'Please check your phone for the OTP',
         });
+        console.log('✅ MSG91 SDK OTP sent, reqId:', msg91Result.reqId);
+      } else {
+        // Fallback to backend MSG91 API if SDK fails
+        console.warn('[Signup] MSG91 SDK failed, falling back to backend MSG91 API');
+        const response = await authAPI.sendOTP({ phone: phoneNumber });
+        
+        if (response.data.success) {
+          setShowOtpModal(true);
+          Toast.show({
+            type: 'success',
+            text1: 'OTP Sent',
+            text2: 'Please check your phone for the OTP',
+          });
+          console.log('✅ OTP sent via backend MSG91 API');
+        } else {
+          throw new Error(response.data.message || 'Failed to send OTP');
+        }
       }
     } catch (error) {
       console.error('Send OTP error:', error);
       const errorMsg = error.response?.data?.message || error.response?.data?.error || error.message || 'Failed to send OTP';
       
-      if (errorMsg.includes('already registered') || errorMsg.includes('already exists')) {
-        Toast.show({
-          type: 'error',
-          text1: 'Phone Already Registered',
-          text2: 'This phone number is already registered. Please sign in instead.',
-          visibilityTime: 5000,
-        });
-        setShowOtpModal(false);
-      } else {
-        setShowOtpModal(true);
         Toast.show({
           type: 'error',
           text1: 'Error',
           text2: errorMsg,
         });
-      }
     } finally {
       setLoading(false);
     }
   };
 
-  // Verify OTP and create account
+  // Verify OTP and create account (uses MSG91 SDK if reqId available, otherwise backend fallback)
   const handleVerifyOTP = async () => {
     if (!otpCode || otpCode.length < 4) {
       Toast.show({
@@ -271,24 +382,47 @@ export default function SignupScreen() {
 
     setLoading(true);
     try {
-      const verifyResponse = await authAPI.verifyOTP({ 
-        phone: phoneNumber,
-        otp: otpCode.trim()
-      });
+      let verified = false;
+      let isMsg91Verified = false;
 
-      if (verifyResponse.data.success) {
+      // Try MSG91 SDK verification first if reqId is available
+      if (msg91ReqId) {
+        console.log('[Signup] Verifying OTP via MSG91 SDK with reqId:', msg91ReqId);
+        const msg91VerifyResult = await msg91VerifyOTP(msg91ReqId, otpCode.trim());
+        
+        if (msg91VerifyResult.success) {
+          verified = true;
+          isMsg91Verified = true;
+          console.log('✅ MSG91 SDK OTP verified successfully');
+        } else {
+          console.warn('[Signup] MSG91 SDK verification failed, trying backend fallback');
+        }
+      }
+
+      // Fallback to backend verification if MSG91 SDK not used or failed
+      if (!verified) {
+        console.log('[Signup] Verifying OTP via backend MSG91 API');
+        const verifyResponse = await authAPI.verifyOTP({ 
+          phone: phoneNumber,
+          otp: otpCode.trim()
+        });
+        verified = verifyResponse.data.success;
+        isMsg91Verified = false;
+      }
+
+      if (verified) {
         setOtpVerified(true);
         setShowOtpModal(false);
         
         await new Promise(resolve => setTimeout(resolve, 500));
         
-        // Create account with all data
-        await createAccount();
+        // Create account with all data (signup_type will be 'otp')
+        await createAccount(isMsg91Verified);
       } else {
         Toast.show({
           type: 'error',
           text1: 'Invalid OTP',
-          text2: verifyResponse.data.message || 'Please enter the correct OTP',
+          text2: 'Please enter the correct OTP',
         });
       }
     } catch (error) {
@@ -304,8 +438,30 @@ export default function SignupScreen() {
     }
   };
 
+  // Retry OTP using MSG91 SDK if reqId available, otherwise resend
+  const handleRetryOTP = async () => {
+    if (msg91ReqId) {
+      console.log('[Signup] Retrying OTP via MSG91 SDK for reqId:', msg91ReqId);
+      const retryResult = await msg91RetryOTP(msg91ReqId);
+      if (retryResult.success) {
+        Toast.show({
+          type: 'success',
+          text1: 'OTP Resent',
+          text2: 'Please check your phone for the new OTP',
+        });
+      } else {
+        // Fallback to resend via backend
+        await handleSendOTP();
+      }
+    } else {
+      // If no reqId, just resend OTP
+      await handleSendOTP();
+    }
+  };
+
   // Create account (for both OTP and password methods)
-  const createAccount = async () => {
+  const createAccount = async (msg91VerifiedParam = false) => {
+    console.log('[Signup] createAccount called with msg91VerifiedParam:', msg91VerifiedParam, 'type:', typeof msg91VerifiedParam);
     setLoading(true);
     try {
       const signupData = {
@@ -318,40 +474,40 @@ export default function SignupScreen() {
 
       if (signupMethod === 'password') {
         signupData.password = password;
+      } else if (signupMethod === 'otp') {
+        // Pass msg91Verified flag if MSG91 SDK verified the OTP
+        if (msg91VerifiedParam) {
+          signupData.msg91Verified = true;
+          console.log('📤 Sending signup with msg91Verified=true (MSG91 SDK verified)');
+        } else {
+          console.log('📤 Sending signup - backend will verify OTP via MSG91 API');
+        }
       }
 
       if (route.params?.packageId) {
         signupData.packageid = route.params.packageId;
       }
 
-      if (route.params?.sponsorid || route.params?.ref) {
-        signupData.sponsorid = route.params.sponsorid || route.params.ref;
+      // Use sponsorId from state (either from URL params or extracted from referral code)
+      if (sponsorId) {
+        signupData.sponsorid = parseInt(sponsorId);
       }
 
       console.log('Calling signup with:', { ...signupData, id_proof: idProof ? 'present' : 'missing', photo: userPhoto ? 'present' : 'missing' });
       const result = await signup(signupData);
 
       if (result.success) {
-        Toast.show({
-          type: 'success',
-          text1: 'Success',
-          text2: 'Account created successfully!',
-        });
+        // Navigate to verification screen with success state
+        navigation.navigate('Verification', { error: false });
       } else {
-        Toast.show({
-          type: 'error',
-          text1: 'Signup Failed',
-          text2: result.error || 'Please try again',
-        });
+        // Navigate to verification screen with error state
+        navigation.navigate('Verification', { error: true });
         setOtpVerified(false);
       }
     } catch (error) {
       console.error('Signup error:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Signup Failed',
-        text2: error.message || 'Please try again',
-      });
+      // Navigate to verification screen with error state
+      navigation.navigate('Verification', { error: true });
       setOtpVerified(false);
     } finally {
       setLoading(false);
@@ -424,6 +580,58 @@ export default function SignupScreen() {
               maxLength={10}
             />
           </View>
+
+          {/* Referral Code */}
+          <View style={styles.inputGroup}>
+            <Icon name="person-add" size={20} color="#666" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="Referral Code (Optional)"
+              value={referralCode}
+              onChangeText={handleReferralCodeChange}
+              editable={referralCodeEditable}
+              keyboardType="default"
+            />
+            {referralVerificationStatus === 'verifying' && (
+              <ActivityIndicator size="small" color="#D4AF37" style={{ marginLeft: 8 }} />
+            )}
+            {referralVerificationStatus === 'valid' && (
+              <Icon name="check-circle" size={20} color="#4CAF50" style={{ marginLeft: 8 }} />
+            )}
+            {referralVerificationStatus === 'invalid' && (
+              <Icon name="cancel" size={20} color="#F44336" style={{ marginLeft: 8 }} />
+            )}
+          </View>
+          {referralVerificationStatus === 'valid' && referrerName && (
+            <View style={styles.referralStatusContainer}>
+              <Icon name="check-circle" size={16} color="#4CAF50" />
+              <Text style={styles.referralStatusText}>
+                Referred by {referrerName}
+              </Text>
+            </View>
+          )}
+          {referralVerificationStatus === 'invalid' && referralCode.length > 0 && (
+            <View style={styles.referralStatusContainer}>
+              <Icon name="cancel" size={16} color="#F44336" />
+              <Text style={styles.referralStatusTextInvalid}>
+                Invalid referral code
+              </Text>
+            </View>
+          )}
+
+          {/* Sponsor ID (Member ID) */}
+          {sponsorId && (
+            <View style={styles.inputGroup}>
+              <Icon name="badge" size={20} color="#666" style={styles.inputIcon} />
+              <TextInput
+                style={[styles.input, !sponsorIdEditable && styles.inputDisabled]}
+                placeholder="Member ID"
+                value={sponsorId}
+                editable={sponsorIdEditable}
+                keyboardType="number-pad"
+              />
+            </View>
+          )}
 
           {/* Signup Method Selection */}
           <View style={styles.methodSelector}>
@@ -629,7 +837,7 @@ export default function SignupScreen() {
 
               <TouchableOpacity
                 style={styles.resendButton}
-                onPress={handleSendOTP}
+                onPress={handleRetryOTP}
                 disabled={loading}
               >
                 <Text style={styles.resendText}>
@@ -660,8 +868,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 50,
     left: 20,
+    zIndex: 10,
     padding: 8,
-    backgroundColor: 'rgba(255,255,255,0.9)',
+    backgroundColor: 'rgba(255,255,255,0.2)',
     borderRadius: 20,
   },
   headerIcon: {
@@ -707,6 +916,28 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 14,
     fontSize: 16,
+  },
+  inputDisabled: {
+    backgroundColor: '#f5f5f5',
+    color: '#666',
+  },
+  referralStatusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: -12,
+    marginBottom: 12,
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  referralStatusText: {
+    fontSize: 14,
+    color: '#4CAF50',
+    fontWeight: '500',
+  },
+  referralStatusTextInvalid: {
+    fontSize: 14,
+    color: '#F44336',
+    fontWeight: '500',
   },
   methodSelector: {
     flexDirection: 'row',

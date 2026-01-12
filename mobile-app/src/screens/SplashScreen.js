@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { LinearGradient } from 'react-native-linear-gradient';
 
 export default function SplashScreen() {
   const navigation = useNavigation();
@@ -10,42 +10,57 @@ export default function SplashScreen() {
   const hasNavigated = useRef(false);
 
   useEffect(() => {
-    // Animate splash screen
-    Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 800,
-        useNativeDriver: false,
-      }),
-      Animated.spring(scaleAnim, {
-        toValue: 1,
-        tension: 50,
-        friction: 7,
-        useNativeDriver: false,
-      }),
-    ]).start();
+    console.log('🎬 SplashScreen mounting...');
+    
+    try {
+      // Animate splash screen
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 800,
+          useNativeDriver: false,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 50,
+          friction: 7,
+          useNativeDriver: false,
+        }),
+      ]).start(() => {
+        console.log('✅ Splash animation completed');
+      });
 
-    // Navigate to Home after animation completes
-    // Home screen exists in the navigation stack for unauthenticated users
-    const timer = setTimeout(() => {
-      if (hasNavigated.current) return;
-      hasNavigated.current = true;
-      
-      try {
-        // Check if navigation is ready and Home screen exists
-        if (navigation && navigation.navigate) {
-          console.log('[SplashScreen] Navigating to Home screen...');
-          navigation.navigate('Home');
+      // Navigate to Home after animation completes
+      // Home screen exists in the navigation stack for unauthenticated users
+      const timer = setTimeout(() => {
+        if (hasNavigated.current) {
+          console.log('⚠️ Already navigated, skipping');
+          return;
         }
-      } catch (error) {
-        console.error('[SplashScreen] Navigation error (non-critical):', error.message);
-        // Navigation error is non-critical - AuthNavigator will handle routing
-      }
-    }, 800); // Wait a bit longer to ensure navigation stack is ready
+        hasNavigated.current = true;
+        
+        try {
+          // Check if navigation is ready and Home screen exists
+          if (navigation && navigation.navigate) {
+            console.log('🏠 [SplashScreen] Navigating to Home screen...');
+            navigation.navigate('Home');
+            console.log('✅ Navigation called');
+          } else {
+            console.error('❌ Navigation not available:', { navigation });
+          }
+        } catch (error) {
+          console.error('❌ [SplashScreen] Navigation error:', error);
+          console.error('Error stack:', error.stack);
+          // Navigation error is non-critical - AuthNavigator will handle routing
+        }
+      }, 1000); // Increased to 1000ms to ensure navigation is ready
 
-    return () => {
-      clearTimeout(timer);
-    };
+      return () => {
+        clearTimeout(timer);
+      };
+    } catch (error) {
+      console.error('❌ SplashScreen useEffect error:', error);
+    }
   }, [navigation]);
 
   // Always render something - even if navigation fails

@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
   TextInput,
 } from 'react-native';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { default as Icon } from 'react-native-vector-icons/MaterialIcons';
 import { adminAPI } from '../../config/api';
 import Toast from 'react-native-toast-message';
 import { formatCurrency, formatDate } from '../../utils/helpers';
@@ -160,6 +160,7 @@ const styles = StyleSheet.create({
   },
   backButton: {
     padding: 8,
+    zIndex:10,
   },
   headerTitle: {
     fontSize: 20,

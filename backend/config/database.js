@@ -18,27 +18,18 @@ const logger = winston.createLogger({
 });
 
 // Create connection pool for better performance
-// const pool = mysql.createPool({ - CHANGED
 const dbConfig = {
   host: process.env.DB_HOST || 'localhost',
   port: process.env.DB_PORT || 3306,
-  // user: process.env.DB_USER || 'gold_user', - CHANGED
-  // password: process.env.DB_PASSWORD || 'gold123',
-  // database: process.env.DB_NAME || 'gold_investment',
-  user: process.env.DB_USER || 'root',
-  database: process.env.DB_NAME || 'mlm_manager',
+  user: process.env.DB_USER || 'gold_user',
+  password: process.env.DB_PASSWORD || 'gold123',
+  database: process.env.DB_NAME || 'gold_investment',
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0
-// }); - CHANGED
 };
-
-// Only add password if it's provided and not empty - ADDED
-if (process.env.DB_PASSWORD && process.env.DB_PASSWORD.trim() !== '') {
-  dbConfig.password = process.env.DB_PASSWORD;
-}
 
 const pool = mysql.createPool(dbConfig);
 
@@ -50,7 +41,14 @@ pool.getConnection()
   })
   .catch(err => {
     logger.error('❌ Database connection failed:', err);
-    process.exit(1);
+    logger.error('💡 Tip: Create a .env file in the backend directory with:');
+    logger.error('   DB_HOST=localhost');
+    logger.error('   DB_USER=gold_user');
+    logger.error('   DB_PASSWORD=gold123');
+    logger.error('   DB_NAME=gold_investment');
+    logger.error('   Or set DB_PASSWORD environment variable when starting the server');
+    // Don't exit immediately - allow server to start and retry
+    // process.exit(1);
   });
 
 // Helper function to execute queries with error handling

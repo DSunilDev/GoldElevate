@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { default as Icon } from 'react-native-vector-icons/MaterialIcons';
 
 export default class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -14,6 +14,9 @@ export default class ErrorBoundary extends React.Component {
 
   componentDidCatch(error, errorInfo) {
     console.error('Error caught by boundary:', error, errorInfo);
+    console.error('Error stack:', error?.stack);
+    console.error('Error message:', error?.message);
+    console.error('Component stack:', errorInfo.componentStack);
   }
 
   render() {

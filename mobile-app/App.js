@@ -3,10 +3,11 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { StatusBar, View, ActivityIndicator } from 'react-native';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import Icon from './src/utils/icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ErrorBoundary from './src/components/ErrorBoundary';
 import Toast from 'react-native-toast-message';
+import { initializeMsg91Widget } from './src/utils/msg91SDK';
 
 // Screens
 import SplashScreen from './src/screens/SplashScreen';
@@ -28,6 +29,7 @@ import TransactionsScreen from './src/screens/TransactionsScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import WithdrawScreen from './src/screens/WithdrawScreen';
+import VerificationScreen from './src/screens/VerificationScreen';
 
 // Admin Screens
 import AdminDashboardScreen from './src/screens/admin/AdminDashboardScreen';
@@ -145,11 +147,30 @@ function AdminTabs() {
 
 // Auth Navigator
 function AuthNavigator() {
-  const { isAuthenticated, user } = useAuth(); // Removed loading from destructuring
-  const isAdmin = user?.role === 'admin';
+  console.log('🧭 AuthNavigator rendering...');
+  
+  let isAuthenticated = false;
+  let user = null;
+  let isAdmin = false;
+  
+  try {
+    const auth = useAuth();
+    isAuthenticated = auth?.isAuthenticated || false;
+    user = auth?.user || null;
+    isAdmin = user?.role === 'admin';
+    console.log('✅ AuthNavigator - Auth state:', { isAuthenticated, isAdmin, userId: user?.id });
+  } catch (error) {
+    console.error('❌ AuthNavigator - Error getting auth state:', error);
+    // Fallback to unauthenticated state on error
+    isAuthenticated = false;
+    user = null;
+    isAdmin = false;
+  }
 
   // Always show Splash first, then navigate based on auth state
   // This prevents grey screen by ensuring something always renders
+  console.log('🧭 AuthNavigator - Rendering navigator with isAuthenticated:', isAuthenticated);
+  
   return (
     <Stack.Navigator 
       screenOptions={{ headerShown: false }}
@@ -165,6 +186,7 @@ function AuthNavigator() {
           <Stack.Screen name="Signup" component={SignupScreen} />
           <Stack.Screen name="AgentSignup" component={AgentSignupScreen} />
           <Stack.Screen name="AdminSignup" component={AdminSignupScreen} />
+          <Stack.Screen name="Verification" component={VerificationScreen} />
           <Stack.Screen name="TermsAndConditions" component={TermsAndConditionsScreen} />
         </>
       ) : isAdmin ? (
@@ -175,6 +197,7 @@ function AuthNavigator() {
           <Stack.Screen name="AdminPackages" component={AdminPackagesScreen} />
           <Stack.Screen name="AdminPaymentGateway" component={AdminPaymentGatewayScreen} />
           <Stack.Screen name="Settings" component={SettingsScreen} />
+          <Stack.Screen name="Verification" component={VerificationScreen} />
         </>
       ) : (
         <>
@@ -184,6 +207,7 @@ function AuthNavigator() {
           <Stack.Screen name="Transactions" component={TransactionsScreen} />
           <Stack.Screen name="Withdraw" component={WithdrawScreen} />
           <Stack.Screen name="Settings" component={SettingsScreen} />
+          <Stack.Screen name="Verification" component={VerificationScreen} />
         </>
       )}
     </Stack.Navigator>
@@ -192,23 +216,44 @@ function AuthNavigator() {
 
 // Main App Component
 export default function App() {
-  return (
-    <ErrorBoundary>
-      <AuthProvider>
-        <NavigationContainer
-          onReady={() => {
-            console.log('NavigationContainer ready');
-          }}
-          onStateChange={() => {
-            console.log('Navigation state changed');
-          }}
-        >
-          <StatusBar barStyle="light-content" backgroundColor="#D4AF37" />
-          <AuthNavigator />
-          <Toast />
-        </NavigationContainer>
-      </AuthProvider>
-    </ErrorBoundary>
-  );
+  // Initialize MSG91 Widget on app start
+  useEffect(() => {
+    try {
+      initializeMsg91Widget();
+    } catch (error) {
+      console.error('Failed to initialize MSG91 Widget:', error);
+    }
+  }, []);
+
+  // Log app initialization
+  console.log('🚀 App component rendering...');
+  console.log('📱 API Base URL:', process.env.EXPO_PUBLIC_API_URL || 'Using config');
+  
+  try {
+    return (
+      <ErrorBoundary>
+        <AuthProvider>
+          <NavigationContainer
+            onReady={() => {
+              console.log('✅ NavigationContainer ready');
+            }}
+            onStateChange={(state) => {
+              console.log('🔄 Navigation state changed:', state?.routes?.[state?.index]?.name);
+            }}
+            onError={(error) => {
+              console.error('❌ Navigation error:', error);
+            }}
+          >
+            <StatusBar barStyle="light-content" backgroundColor="#D4AF37" />
+            <AuthNavigator />
+            <Toast />
+          </NavigationContainer>
+        </AuthProvider>
+      </ErrorBoundary>
+    );
+  } catch (error) {
+    console.error('❌ App render error:', error);
+    throw error;
+  }
 }
 

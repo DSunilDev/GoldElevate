@@ -8,10 +8,10 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { LinearGradient } from 'react-native-linear-gradient';
 import { incomeAPI, paymentAPI } from '../config/api';
 import Toast from 'react-native-toast-message';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { default as Icon } from 'react-native-vector-icons/MaterialIcons';
 import { formatCurrency, formatDateTime } from '../utils/helpers';
 import { showErrorToast } from '../utils/errorHandler';
 
@@ -240,13 +240,8 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 30,
   },
   backButton: {
-    position: 'absolute',
-    top: 50,
-    left: 20,
     padding: 8,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 20,
-    zIndex: 1,
+    zIndex: 10,
   },
   headerTitle: {
     fontSize: 24,

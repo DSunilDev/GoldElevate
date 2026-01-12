@@ -10,8 +10,8 @@ import {
   RefreshControl,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { LinearGradient } from 'react-native-linear-gradient';
+import { default as Icon } from 'react-native-vector-icons/MaterialIcons';
 import { withdrawAPI, dashboardAPI } from '../config/api';
 import Toast from 'react-native-toast-message';
 import { formatCurrency, formatDate } from '../utils/helpers';
@@ -553,7 +553,7 @@ export default function WithdrawScreen({ navigation }) {
                 <View style={styles.withdrawalHeader}>
                   <View>
                     <Text style={styles.withdrawalAmount}>
-                      ₹{formatCurrency(withdrawal.amount)}
+                      {formatCurrency(withdrawal.amount)}
                     </Text>
                     <Text style={styles.withdrawalDate}>
                       {formatDate(withdrawal.created)}
@@ -637,6 +637,7 @@ const styles = StyleSheet.create({
   },
   backButton: {
     padding: 8,
+    zIndex: 10,
   },
   headerTitle: {
     fontSize: 24,

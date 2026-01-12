@@ -75,17 +75,10 @@ router.get('/referral-link', authenticate, requireMember, async (req, res) => {
     
     const memberData = memberResult[0];
     
-    // Create meaningful referral code using member's login or phone
-    // Format: ref-{login} or ref{last4digits}{id} for phone numbers
-    let referralCode = memberData.login || `ref${memberId}`;
-    
-    // If login is a phone number (10 digits), use a shorter format
-    if (/^\d{10}$/.test(referralCode)) {
-      referralCode = `ref${referralCode.slice(-4)}${memberId}`; // Last 4 digits + memberId
-    } else {
-      // Use login as-is if it's a username (clean it up)
-      referralCode = `ref-${referralCode.replace(/[^a-zA-Z0-9]/g, '')}`;
-    }
+    // Create referral code using format: phone+memberid
+    // Example: phone "9876543210" + memberid "5" = "98765432105"
+    const phone = memberData.phone || '';
+    const referralCode = phone ? `${phone}${memberId}` : `${memberId}`;
     
     // Use sponsorid parameter for referral tracking (backend uses this)
     const baseUrl = process.env.FRONTEND_URL || 'http://localhost:19006';
@@ -114,6 +107,60 @@ router.get('/referral-link', authenticate, requireMember, async (req, res) => {
       success: false,
       message: 'Failed to generate referral link',
       error: error.message
+    });
+  }
+});
+
+// Verify referral code
+// This endpoint extracts member ID from referral code (phone+memberid format)
+// and returns member details for validation
+router.get('/verify-referral-code', async (req, res) => {
+  try {
+    const { code } = req.query;
+    
+    if (!code || typeof code !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'Referral code is required',
+        valid: false
+      });
+    }
+    
+    // Find member where CONCAT(phone, memberid) matches the code
+    // Format: phone+memberid (e.g., "98765432105" where phone="9876543210" and memberid="5")
+    const memberResult = await query(
+      `SELECT memberid, firstname, lastname, phone 
+       FROM member 
+       WHERE CONCAT(phone, memberid) = ?`,
+      [code]
+    );
+    
+    if (!memberResult || memberResult.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Invalid referral code',
+        valid: false
+      });
+    }
+    
+    const member = memberResult[0];
+    
+    res.json({
+      success: true,
+      valid: true,
+      data: {
+        memberid: member.memberid,
+        firstname: member.firstname || '',
+        lastname: member.lastname || '',
+        phone: member.phone || ''
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to verify referral code',
+      error: error.message,
+      valid: false
     });
   }
 });

@@ -10,7 +10,7 @@ import {
   Modal,
   TextInput,
 } from 'react-native';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { default as Icon } from 'react-native-vector-icons/MaterialIcons';
 import { adminAPI } from '../../config/api';
 import Toast from 'react-native-toast-message';
 import { formatCurrency, formatDate } from '../../utils/helpers';
@@ -64,11 +64,18 @@ export default function AdminWithdrawsScreen({ navigation }) {
   const confirmApprove = async () => {
     if (!selectedWithdrawId) return;
     
+    // Validate transaction ID is required
+    const trimmedTransactionId = (tempTransactionId || '').trim();
+    if (!trimmedTransactionId) {
+      showErrorToast(null, 'Transaction ID is required to approve withdrawal');
+      return;
+    }
+    
     setApprovingId(selectedWithdrawId);
     setShowTransactionModal(false);
     
     try {
-      const response = await adminAPI.approveWithdraw(selectedWithdrawId, tempTransactionId || '');
+      const response = await adminAPI.approveWithdraw(selectedWithdrawId, trimmedTransactionId);
       if (response.data?.success !== false) {
         showSuccessToast('Withdrawal approved successfully', 'Success');
         setTempTransactionId('');
@@ -86,30 +93,70 @@ export default function AdminWithdrawsScreen({ navigation }) {
   };
 
   const handleReject = async (id) => {
-    // Use window.confirm for web compatibility (same as payments)
-    const isWeb = typeof window !== 'undefined';
+    // Check if window.confirm exists (only in actual web browsers, not React Native)
+    const hasWindowConfirm = typeof window !== 'undefined' && typeof window.confirm === 'function';
     
-    if (isWeb) {
+    if (hasWindowConfirm) {
       // Web: Use native browser confirm
-      const confirmed = window.confirm(`Are you sure you want to reject withdrawal ID ${id}?`);
-      if (!confirmed) {
-        console.log('[REJECT WITHDRAWAL] User cancelled rejection');
-        return;
+      try {
+        const confirmed = window.confirm(`Are you sure you want to reject withdrawal ID ${id}?`);
+        if (!confirmed) {
+          console.log('[REJECT WITHDRAWAL] User cancelled rejection');
+          return;
+        }
+        // Perform rejection directly for web
+        performRejection(id).catch((error) => {
+          console.error('[REJECT WITHDRAWAL] Unhandled error in performRejection:', error);
+          showErrorToast(error, 'Failed to reject withdrawal');
+        });
+      } catch (error) {
+        console.error('[REJECT WITHDRAWAL] Error with window.confirm, falling back to Alert:', error);
+        // Fall through to use Alert instead
+        Alert.alert(
+          'Reject Withdrawal',
+          `Are you sure you want to reject withdrawal ID ${id}?`,
+          [
+            { 
+              text: 'Cancel', 
+              style: 'cancel',
+              onPress: () => {
+                console.log('[REJECT WITHDRAWAL] User cancelled rejection');
+              }
+            },
+            {
+              text: 'Reject',
+              style: 'destructive',
+              onPress: () => {
+                performRejection(id).catch((error) => {
+                  console.error('[REJECT WITHDRAWAL] Unhandled error in performRejection:', error);
+                  showErrorToast(error, 'Failed to reject withdrawal');
+                });
+              },
+            },
+          ]
+        );
       }
-      // Perform rejection directly for web
-      performRejection(id);
     } else {
-      // Mobile: Use React Native Alert
+      // Mobile or web without window.confirm: Use React Native Alert
       Alert.alert(
         'Reject Withdrawal',
         `Are you sure you want to reject withdrawal ID ${id}?`,
         [
-          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Cancel', 
+            style: 'cancel',
+            onPress: () => {
+              console.log('[REJECT WITHDRAWAL] User cancelled rejection');
+            }
+          },
           {
             text: 'Reject',
             style: 'destructive',
             onPress: () => {
-              performRejection(id);
+              performRejection(id).catch((error) => {
+                console.error('[REJECT WITHDRAWAL] Unhandled error in performRejection:', error);
+                showErrorToast(error, 'Failed to reject withdrawal');
+              });
             },
           },
         ]
@@ -172,7 +219,7 @@ export default function AdminWithdrawsScreen({ navigation }) {
           style={[styles.filterButton, filter === 'all' && styles.filterButtonActive]}
           onPress={() => setFilter('all')}
         >
-          <Text style={[styles.filterText, filter === 'all' && styles.filterTextActive]}>
+          <Text numberOfLines={1} style={[styles.filterText, filter === 'all' && styles.filterTextActive]}>
             All
           </Text>
         </TouchableOpacity>
@@ -180,7 +227,7 @@ export default function AdminWithdrawsScreen({ navigation }) {
           style={[styles.filterButton, filter === 'apply' && styles.filterButtonActive]}
           onPress={() => setFilter('apply')}
         >
-          <Text style={[styles.filterText, filter === 'apply' && styles.filterTextActive]}>
+          <Text numberOfLines={1} style={[styles.filterText, filter === 'apply' && styles.filterTextActive]}>
             Pending
           </Text>
         </TouchableOpacity>
@@ -188,7 +235,7 @@ export default function AdminWithdrawsScreen({ navigation }) {
           style={[styles.filterButton, filter === 'finished' && styles.filterButtonActive]}
           onPress={() => setFilter('finished')}
         >
-          <Text style={[styles.filterText, filter === 'finished' && styles.filterTextActive]}>
+          <Text numberOfLines={1} style={[styles.filterText, filter === 'finished' && styles.filterTextActive]}>
             Approved
           </Text>
         </TouchableOpacity>
@@ -196,7 +243,7 @@ export default function AdminWithdrawsScreen({ navigation }) {
           style={[styles.filterButton, filter === 'reject' && styles.filterButtonActive]}
           onPress={() => setFilter('reject')}
         >
-          <Text style={[styles.filterText, filter === 'reject' && styles.filterTextActive]}>
+          <Text numberOfLines={1} style={[styles.filterText, filter === 'reject' && styles.filterTextActive]}>
             Rejected
           </Text>
         </TouchableOpacity>
@@ -359,14 +406,15 @@ export default function AdminWithdrawsScreen({ navigation }) {
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Approve Withdrawal</Text>
             <Text style={styles.modalSubtitle}>
-              Enter transaction ID (optional):
+              Enter transaction ID (required):
             </Text>
             <TextInput
               style={styles.modalInput}
-              placeholder="Transaction ID (optional)"
+              placeholder="Transaction ID *"
               value={tempTransactionId}
               onChangeText={setTempTransactionId}
               placeholderTextColor="#999"
+              autoCapitalize="none"
             />
             <View style={styles.modalButtons}>
               <TouchableOpacity
@@ -380,10 +428,20 @@ export default function AdminWithdrawsScreen({ navigation }) {
                 <Text style={styles.modalButtonCancelText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonApprove]}
+                style={[
+                  styles.modalButton,
+                  styles.modalButtonApprove,
+                  !tempTransactionId?.trim() && styles.modalButtonDisabled
+                ]}
                 onPress={confirmApprove}
+                disabled={!tempTransactionId?.trim()}
               >
-                <Text style={styles.modalButtonApproveText}>Approve</Text>
+                <Text style={[
+                  styles.modalButtonApproveText,
+                  !tempTransactionId?.trim() && styles.modalButtonDisabledText
+                ]}>
+                  Approve
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -410,6 +468,7 @@ const styles = StyleSheet.create({
   },
   backButton: {
     padding: 8,
+    zIndex:10,
   },
   headerTitle: {
     fontSize: 20,
@@ -421,25 +480,30 @@ const styles = StyleSheet.create({
   },
   filters: {
     flexDirection: 'row',
-    padding: 16,
-    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 8,
   },
   filterButton: {
     flex: 1,
-    padding: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 6,
     borderRadius: 12,
     backgroundColor: '#fff',
     alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 2,
     borderColor: '#D4AF37',
+    minHeight: 40,
   },
   filterButtonActive: {
     backgroundColor: '#D4AF37',
   },
   filterText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
     color: '#D4AF37',
+    textAlign: 'center',
   },
   filterTextActive: {
     color: '#fff',
@@ -625,6 +689,16 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#fff',
+  },
+  modalButtonDisabled: {
+    backgroundColor: '#ccc',
+    opacity: 0.6,
+  },
+  modalButtonDisabledText: {
+    color: '#999',
+  },
+  approveButtonDisabled: {
+    opacity: 0.5,
   },
 });
 

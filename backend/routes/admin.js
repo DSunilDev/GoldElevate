@@ -1,69 +1,133 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const { query, transaction, logger } = require('../config/database');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
+const { creditReferralBonus } = require('../utils/referralBonus');
 
-// Approve member signup
+// Configure multer for image uploads
+const uploadsDir = path.join(__dirname, '../uploads/images');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'qr-code-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|gif/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    if (mimetype && extname) {
+      return cb(null, true);
+    }
+    cb(new Error('Only image files are allowed'));
+  }
+});
+
+// Approve member signup (accepts memberid - consistent with pending-signups endpoint)
 router.post('/approve-signup/:id', authenticate, requireAdmin, async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.params; // This is memberid now
+
+    logger.info(`[ADMIN APPROVE SIGNUP] Approving signup for memberid: ${id}`);
 
     await transaction(async (connection) => {
-      const signupResult = await connection.execute(
-        `SELECT * FROM member_signup WHERE signupid = ?`,
+      // Check if member exists and is inactive
+      const memberResult = await connection.execute(
+        `SELECT * FROM member WHERE memberid = ?`,
         [id]
       );
-      const signup = signupResult[0]; // connection.execute returns [rows, fields]
+      const member = memberResult[0]; // connection.execute returns [rows, fields]
 
-      if (!signup || signup.length === 0) {
-        throw new Error('Signup not found');
+      if (!member || member.length === 0) {
+        throw new Error('Member not found');
       }
 
-      const signupData = signup[0];
+      const memberData = member[0];
 
-      // Approve the signup - use signupstatus field (not status)
+      // Check if member is already active
+      if (memberData.active === 'Yes') {
+        throw new Error('Member is already active');
+      }
+
+      // Update member status to active
       await connection.execute(
-        `UPDATE member_signup SET signupstatus = 'Yes' WHERE signupid = ?`,
+        `UPDATE member SET active = 'Yes' WHERE memberid = ?`,
         [id]
       );
 
-      // Update member status
-      await connection.execute(
-        `UPDATE member SET active = 'Yes' WHERE memberid = ?`,
-        [signupData.memberid]
-      );
+      logger.info(`[ADMIN APPROVE SIGNUP] ✅ Member ${id} approved successfully`);
     });
 
-    res.json({ success: true, message: 'Signup approved successfully' });
+    res.json({ success: true, message: 'Application approved successfully. Member is now active.' });
   } catch (error) {
+    logger.error(`[ADMIN APPROVE SIGNUP] ❌ Error approving signup for memberid ${req.params.id}:`, error);
     res.status(500).json({
       success: false,
-      message: error.message || 'Failed to approve signup',
+      message: error.message || 'Failed to approve application',
       error: error.message
     });
   }
 });
 
-// Get all signups pending approval
+// Get all signups pending approval (members with active = 'No')
 router.get('/pending-signups', authenticate, requireAdmin, async (req, res) => {
   try {
+    logger.info('[ADMIN PENDING SIGNUPS] Fetching pending applications (active = No)...');
+    
+    // Get all members with active = 'No' - consistent with dashboard count
     const signups = await query(
-      `SELECT ms.*, m.*, dt.name as package_name, s.amount, up.transaction_id
-       FROM member_signup ms
-       JOIN member m ON ms.memberid = m.memberid
+      `SELECT 
+        m.memberid,
+        m.login,
+        m.firstname,
+        m.lastname,
+        m.email,
+        m.phone,
+        m.active,
+        m.created,
+        m.typeid,
+        dt.name as package_name,
+        dt.price,
+        dt.daily_return,
+        s.saleid,
+        s.amount,
+        s.paystatus,
+        s.paytype,
+        s.created as sale_created,
+        up.upipaymentid,
+        up.transaction_id,
+        up.status as payment_status
+       FROM member m
+       LEFT JOIN def_type dt ON m.typeid = dt.typeid
        LEFT JOIN sale s ON m.memberid = s.memberid AND s.signuptype = 'Yes'
-       LEFT JOIN def_type dt ON s.typeid = dt.typeid
        LEFT JOIN upi_payment up ON s.saleid = up.saleid
-       WHERE ms.signupstatus = 'Wait' OR ms.signupstatus = 'No'
-       ORDER BY ms.signuptime DESC`
+       WHERE m.active = 'No'
+       ORDER BY m.created DESC`
     );
 
+    logger.info(`[ADMIN PENDING SIGNUPS] Found ${signups.length} pending applications`);
+    
     res.json({
       success: true,
       data: signups
     });
   } catch (error) {
+    logger.error('[ADMIN PENDING SIGNUPS] Error fetching pending signups:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch pending signups',
@@ -184,23 +248,37 @@ router.get('/dashboard', authenticate, requireAdmin, async (req, res) => {
       ? (totalInvestmentsResult[0].total || 0)
       : 0;
     
-    // Get total returns paid (all returns that have been paid out)
+    // Get total returns paid (total earnings credited to all members)
+    // This is the sum of all daily returns and other earnings (status 'In', 'Weekly', 'Monthly')
     const totalReturnsResult = await query(
       `SELECT COALESCE(SUM(amount), 0) as total 
        FROM income_ledger 
-       WHERE status IN ('Weekly', 'Monthly', 'Withdraw', 'In') AND amount > 0`
+       WHERE status IN ('In', 'Weekly', 'Monthly') AND amount > 0`
     );
     const totalReturns = totalReturnsResult && Array.isArray(totalReturnsResult) && totalReturnsResult.length > 0 
       ? (totalReturnsResult[0].total || 0)
       : 0;
     
-    // Get pending approvals
-    const pendingApprovalsResult = await query(
-      `SELECT COUNT(*) as count FROM member_signup WHERE signupstatus = 'Wait' OR signupstatus = 'No' OR signupstatus = 'Pending'`
-    );
-    const pendingApprovals = pendingApprovalsResult && Array.isArray(pendingApprovalsResult) && pendingApprovalsResult.length > 0 
-      ? (pendingApprovalsResult[0].count || pendingApprovalsResult[0].COUNT || 0)
-      : 0;
+    // Get pending approvals (member signups waiting for approval)
+    // Check if member_signup table exists and has pending entries
+    let pendingApprovals = 0;
+    try {
+      const pendingApprovalsResult = await query(
+        `SELECT COUNT(*) as count FROM member WHERE active = 'No'`
+      );
+      pendingApprovals = pendingApprovalsResult && Array.isArray(pendingApprovalsResult) && pendingApprovalsResult.length > 0 
+        ? (pendingApprovalsResult[0].count || pendingApprovalsResult[0].COUNT || 0)
+        : 0;
+    } catch (error) {
+      // If member_signup table doesn't exist, check for pending payments instead
+      logger.warn('[ADMIN DASHBOARD] member_signup table not found, using pending payments as approvals');
+      const pendingPaymentsCheck = await query(
+        `SELECT COUNT(*) as count FROM upi_payment WHERE status = 'Pending'`
+      );
+      pendingApprovals = pendingPaymentsCheck && Array.isArray(pendingPaymentsCheck) && pendingPaymentsCheck.length > 0 
+        ? (pendingPaymentsCheck[0].count || pendingPaymentsCheck[0].COUNT || 0)
+        : 0;
+    }
     
     // Get pending payments
     const pendingPaymentsResult = await query(
@@ -324,38 +402,72 @@ router.post('/verify-payment/:id', authenticate, requireAdmin, async (req, res) 
         throw new Error('Payment could not be verified. It may have already been processed.');
       }
 
-      // Update sale status
+      // Update sale status and store activation timestamp
+      // Sale record should exist (created during payment submission), but handle missing case
       if (paymentData.saleid) {
         await connection.execute(
-          `UPDATE sale SET paystatus = 'Delivered', active = 'Yes' WHERE saleid = ?`,
+          `UPDATE sale SET paystatus = 'Delivered', active = 'Yes', activated_at = NOW() WHERE saleid = ?`,
           [paymentData.saleid]
         );
         
-        // Get the sale's typeid to update member's package
+        // Get the sale's typeid and amount to update member's package
         const saleResult = await connection.execute(
-          `SELECT typeid FROM sale WHERE saleid = ?`,
+          `SELECT typeid, amount FROM sale WHERE saleid = ?`,
           [paymentData.saleid]
         );
         const sale = saleResult[0];
         if (sale && sale.length > 0 && sale[0].typeid) {
-          // Update member's typeid to the verified package
-          await connection.execute(
-            `UPDATE member SET typeid = ?, active = 'Yes' WHERE memberid = ?`,
-            [sale[0].typeid, paymentData.memberid]
+          // Check if member already has a typeid (first sale already verified)
+          const memberResult = await connection.execute(
+            `SELECT typeid FROM member WHERE memberid = ?`,
+            [paymentData.memberid]
           );
+          const member = memberResult[0];
+          const hasExistingTypeid = member && member.length > 0 && member[0].typeid !== null && member[0].typeid !== undefined;
+          
+          if (!hasExistingTypeid) {
+            // First sale - update member's typeid to the verified package
+            await connection.execute(
+              `UPDATE member SET typeid = ?, active = 'Yes' WHERE memberid = ?`,
+              [sale[0].typeid, paymentData.memberid]
+            );
+            logger.info(`[VERIFY PAYMENT] ✅ First sale verified - Updated member ${paymentData.memberid} typeid to ${sale[0].typeid}, set active='Yes'`);
+            
+            // Credit referral bonus to sponsor (only for first transaction)
+            const packagePrice = parseFloat(sale[0].amount || 0);
+            if (packagePrice > 0) {
+              await creditReferralBonus(connection, paymentData.memberid, packagePrice);
+            } else {
+              logger.warn(`[VERIFY PAYMENT] Package price is 0 or invalid (${sale[0].amount}) for member ${paymentData.memberid}, skipping referral bonus`);
+            }
+          } else {
+            // Subsequent sale - only update active status, don't change typeid
+            await connection.execute(
+              `UPDATE member SET active = 'Yes' WHERE memberid = ? AND active != 'Yes'`,
+              [paymentData.memberid]
+            );
+            logger.info(`[VERIFY PAYMENT] Subsequent sale verified - Member ${paymentData.memberid} already has typeid ${member[0].typeid}, only updated active status`);
+          }
         } else {
           // Fallback: just update active status
           await connection.execute(
             `UPDATE member SET active = 'Yes' WHERE memberid = ?`,
             [paymentData.memberid]
           );
+          logger.info(`[VERIFY PAYMENT] Updated member ${paymentData.memberid} active status to 'Yes' (no package typeid)`);
         }
+        logger.info(`[VERIFY PAYMENT] Updated sale ${paymentData.saleid} to paystatus='Delivered', active='Yes'`);
       } else {
-        // No saleid - just update member status to 'Yes' (active)
+        // No saleid - this shouldn't happen, but create sale record if we can determine package
+        logger.warn(`[VERIFY PAYMENT] Payment ${id} has no saleid - attempting to create sale record`);
+        
+        // Try to find package by amount or get from payment data
+        // For now, just update member status and log warning
         await connection.execute(
           `UPDATE member SET active = 'Yes' WHERE memberid = ?`,
           [paymentData.memberid]
         );
+        logger.warn(`[VERIFY PAYMENT] Payment ${id} verified but no sale record exists - member activated but package not assigned`);
       }
 
       // Get or initialize wallet balance
@@ -513,20 +625,13 @@ router.post('/reject-withdraw/:id', authenticate, requireAdmin, [
 
       logger.info(`[REJECT WITHDRAW] Withdrawal ${id} current status: ${withdrawData.status}`);
 
-      // Only allow rejection of pending/apply statuses
-      // Allow rejection if status is 'apply', 'pending', or 'processing'
-      // Don't allow if already 'finished' or 'reject'
-      if (withdrawData.status === 'finished') {
-        logger.warn(`[REJECT WITHDRAW] Withdrawal ${id} is already finished, cannot reject`);
-        throw new Error('Withdrawal request is already approved and processed');
+      // Only allow rejection for 'apply', 'pending', or 'processing' statuses
+      if (withdrawData.status !== 'apply' && withdrawData.status !== 'pending' && withdrawData.status !== 'processing') {
+        logger.warn(`[REJECT WITHDRAW] Withdrawal ${id} status is ${withdrawData.status}, cannot reject`);
+        throw new Error('Withdrawal request can only be rejected if status is apply, pending, or processing');
       }
 
-      if (withdrawData.status === 'reject') {
-        logger.warn(`[REJECT WITHDRAW] Withdrawal ${id} is already rejected`);
-        throw new Error('Withdrawal request is already rejected');
-      }
-
-      // Update withdraw status to reject - only update if status is pending/apply/processing
+      // Update withdraw status to reject - only for apply, pending, or processing statuses
       const updateResult = await connection.execute(
         `UPDATE member_withdraw 
          SET status = 'reject', 
@@ -567,6 +672,7 @@ router.post('/approve-withdraw/:id', authenticate, requireAdmin, [
   try {
     const { id } = req.params;
     let withdrawData = null; // Store withdrawData outside transaction for logging
+    let withdrawalAmount = 0; // Store withdrawalAmount outside transaction for response
 
     await transaction(async (connection) => {
       const withdrawResult = await connection.execute(
@@ -581,8 +687,15 @@ router.post('/approve-withdraw/:id', authenticate, requireAdmin, [
 
       withdrawData = withdrawRows[0]; // Assign to outer variable
 
-      if (withdrawData.status !== 'apply' && withdrawData.status !== 'pending') {
-        throw new Error('Withdrawal request is not in pending status');
+      // Only allow approval for 'apply', 'pending', or 'processing' statuses
+      if (withdrawData.status !== 'apply' && withdrawData.status !== 'pending' && withdrawData.status !== 'processing') {
+        throw new Error('Withdrawal request can only be approved if status is apply, pending, or processing');
+      }
+
+      // Ensure amount is a number
+      withdrawalAmount = Number(withdrawData.amount) || 0;
+      if (withdrawalAmount <= 0) {
+        throw new Error('Invalid withdrawal amount');
       }
 
       const { admin_transaction_id } = req.body;
@@ -628,11 +741,11 @@ router.post('/approve-withdraw/:id', authenticate, requireAdmin, [
         currentBalance,
         investment,
         withdrawableBalance,
-        requestedAmount: withdrawData.amount
+        requestedAmount: withdrawalAmount
       });
 
-      if (withdrawableBalance < withdrawData.amount) {
-        throw new Error(`Insufficient withdrawable balance. Available: ₹${withdrawableBalance.toFixed(2)}, Requested: ₹${withdrawData.amount.toFixed(2)}`);
+      if (withdrawableBalance < withdrawalAmount) {
+        throw new Error(`Insufficient withdrawable balance. Available: ₹${withdrawableBalance.toFixed(2)}, Requested: ₹${withdrawalAmount.toFixed(2)}`);
       }
 
       // Update withdraw status
@@ -654,13 +767,12 @@ router.post('/approve-withdraw/:id', authenticate, requireAdmin, [
       const lastLedgerRow = ledgerRows?.[0] || {};
 
       const lastBalance = Number(lastLedgerRow.balance || 0);
-      const newBalance = Math.max(0, lastBalance - withdrawData.amount);
+      const newBalance = Math.max(0, lastBalance - withdrawalAmount);
       const weekid = lastLedgerRow.weekid || 0;
 
-      logger.info(`[APPROVE WITHDRAW] Deducting ${withdrawData.amount} from balance ${lastBalance} = ${newBalance}`);
+      logger.info(`[APPROVE WITHDRAW] Deducting ${withdrawalAmount} from balance ${lastBalance} = ${newBalance}`);
 
       // Create ledger entry for withdrawal (negative amount to deduct from balance)
-      const withdrawalAmount = Number(withdrawData.amount);
       const negativeAmount = -withdrawalAmount;
       
       logger.info(`[APPROVE WITHDRAW] Creating ledger entry:`, {
@@ -711,7 +823,7 @@ router.post('/approve-withdraw/:id', authenticate, requireAdmin, [
         logger.error(`[APPROVE WITHDRAW] ❌ Balance mismatch! Expected: ${newBalance}, Got: ${verifiedEntry?.balance}`);
       }
 
-      logger.info(`[APPROVE WITHDRAW] ✅ Withdrawal approved successfully for member ${withdrawData.memberid}, amount: ${withdrawData.amount}`);
+      logger.info(`[APPROVE WITHDRAW] ✅ Withdrawal approved successfully for member ${withdrawData.memberid}, amount: ${withdrawalAmount}`);
     });
 
     res.json({
@@ -720,7 +832,7 @@ router.post('/approve-withdraw/:id', authenticate, requireAdmin, [
       data: {
         withdrawalId: id,
         memberId: withdrawData?.memberid,
-        amount: withdrawData?.amount
+        amount: withdrawalAmount
       }
     });
   } catch (error) {
@@ -733,7 +845,7 @@ router.post('/approve-withdraw/:id', authenticate, requireAdmin, [
   }
 });
 
-// Get payment gateway settings
+// Get payment gateway settings (returns active settings)
 router.get('/payment-gateway', authenticate, requireAdmin, async (req, res) => {
   try {
     let settings = {
@@ -748,11 +860,47 @@ router.get('/payment-gateway', authenticate, requireAdmin, async (req, res) => {
     };
 
     try {
-      const dbSettings = await query(
-        `SELECT * FROM payment_gateway_settings ORDER BY id DESC LIMIT 1`
+      // Try to get active payment gateway settings first
+      let dbSettings = [];
+      try {
+        dbSettings = await query(
+          `SELECT * FROM payment_gateway_settings 
+           WHERE active = 'Yes' 
+           ORDER BY updated_at DESC, id DESC 
+           LIMIT 1`
       );
-      if (dbSettings && Array.isArray(dbSettings) && dbSettings.length > 0) {
+      } catch (activeError) {
+        // Active column might not exist yet, get most recent
+        logger.info('Active column might not exist, getting most recent settings');
+      }
+      
+      // If no active settings found, get the most recent one
+      if (!dbSettings || dbSettings.length === 0) {
+        const recentSettings = await query(
+          `SELECT * FROM payment_gateway_settings ORDER BY updated_at DESC, id DESC LIMIT 1`
+        );
+        if (recentSettings && recentSettings.length > 0) {
+          settings = recentSettings[0];
+        }
+      } else {
         settings = dbSettings[0];
+      }
+      
+      // Convert file path to URL if it's a local file
+      if (settings.qr_code_url && !settings.qr_code_url.startsWith('http')) {
+        const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+        if (settings.qr_code_url.startsWith('/uploads/')) {
+          settings.qr_code_url = baseUrl + settings.qr_code_url;
+        } else if (settings.qr_code_url.startsWith('/')) {
+          settings.qr_code_url = baseUrl + '/uploads/images/' + path.basename(settings.qr_code_url);
+        }
+      }
+      
+      // Convert file path to URL if it's a local file
+      if (settings.qr_code_url && settings.qr_code_url.startsWith('/')) {
+        // If it's a local file path, convert to URL
+        const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+        settings.qr_code_url = baseUrl + '/uploads/images/' + path.basename(settings.qr_code_url);
       }
     } catch (tableError) {
       // Table might not exist yet, use defaults
@@ -767,6 +915,114 @@ router.get('/payment-gateway', authenticate, requireAdmin, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch payment gateway settings',
+      error: error.message
+    });
+  }
+});
+
+// Upload QR code image via base64 (more reliable for React Native)
+router.post('/payment-gateway/upload-qr-base64', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const { image, filename, mimetype } = req.body;
+    
+    if (!image) {
+      return res.status(400).json({
+        success: false,
+        message: 'No image data provided'
+      });
+    }
+
+    // Extract base64 data from data URL
+    const base64Data = image.includes(',') ? image.split(',')[1] : image;
+    const imageBuffer = Buffer.from(base64Data, 'base64');
+    
+    // Generate filename
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = filename?.split('.').pop() || mimetype?.split('/')[1] || 'jpg';
+    const finalFilename = `qr-code-${uniqueSuffix}.${ext}`;
+    const filePath = path.join(uploadsDir, finalFilename);
+    
+    // Save file
+    fs.writeFileSync(filePath, imageBuffer);
+    
+    const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+    const imageUrl = `${baseUrl}/uploads/images/${finalFilename}`;
+
+    logger.info('QR code image uploaded successfully (base64)', {
+      filename: finalFilename,
+      size: imageBuffer.length,
+      mimetype: mimetype || 'image/jpeg',
+    });
+
+    res.json({
+      success: true,
+      message: 'Image uploaded successfully',
+      data: {
+        filename: finalFilename,
+        url: imageUrl,
+        path: `/uploads/images/${finalFilename}`
+      }
+    });
+  } catch (error) {
+    logger.error('QR code upload error (base64):', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to upload image',
+      error: error.message
+    });
+  }
+});
+
+// Upload QR code image via FormData (for web/Postman)
+router.post('/payment-gateway/upload-qr', authenticate, requireAdmin, upload.single('qr_image'), async (req, res) => {
+  try {
+    logger.info('═══════════════════════════════════════════════════');
+    logger.info('QR code upload request received');
+    logger.info('Request details:', {
+      method: req.method,
+      url: req.url,
+      headers: {
+        'content-type': req.headers['content-type'],
+        'content-length': req.headers['content-length'],
+        'authorization': req.headers['authorization'] ? 'Present' : 'Missing',
+      },
+      hasFile: !!req.file,
+      body: req.body,
+      files: req.files,
+    });
+    logger.info('═══════════════════════════════════════════════════');
+
+    if (!req.file) {
+      logger.warn('No file received in upload request');
+      return res.status(400).json({
+        success: false,
+        message: 'No image file provided. Please select an image and try again.'
+      });
+    }
+
+    const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+    const imageUrl = `${baseUrl}/uploads/images/${req.file.filename}`;
+
+    logger.info('QR code image uploaded successfully', {
+      filename: req.file.filename,
+      size: req.file.size,
+      mimetype: req.file.mimetype,
+    });
+
+    res.json({
+      success: true,
+      message: 'Image uploaded successfully',
+      data: {
+        filename: req.file.filename,
+        url: imageUrl,
+        path: `/uploads/images/${req.file.filename}`
+      }
+    });
+  } catch (error) {
+    logger.error('QR code upload error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to upload image',
       error: error.message
     });
   }
@@ -790,83 +1046,69 @@ router.put('/payment-gateway', authenticate, requireAdmin, [
     const {
       upi_id,
       qr_code_url,
-      qr_code_base64,
+      // qr_code_base64 - Don't store in DB, too large. File is stored on disk and URL is in qr_code_url
       bank_account_number,
       bank_ifsc_code,
       bank_name,
       account_holder_name,
     } = req.body;
 
-    let existing = [];
+    // First, set all existing records to inactive (if active column exists)
     try {
-      const existingResult = await query(
-        `SELECT id FROM payment_gateway_settings ORDER BY id DESC LIMIT 1`
-      );
-      existing = existingResult || [];
-    } catch (tableError) {
-      // Table doesn't exist, will create it
-      logger.info('Creating payment_gateway_settings table');
-      existing = [];
+      await query(`UPDATE payment_gateway_settings SET active = 'No' WHERE active = 'Yes'`);
+    } catch (error) {
+      // Column might not exist yet, that's okay - will be added by migration
+      logger.info('Could not update existing records (active column might not exist yet)');
     }
 
-    if (existing && Array.isArray(existing) && existing.length > 0) {
-      const updateFields = [];
-      const updateValues = [];
-
-      if (upi_id !== undefined) {
-        updateFields.push('upi_id = ?');
-        updateValues.push(upi_id);
-      }
-      if (qr_code_url !== undefined) {
-        updateFields.push('qr_code_url = ?');
-        updateValues.push(qr_code_url);
-      }
-      if (qr_code_base64 !== undefined) {
-        updateFields.push('qr_code_base64 = ?');
-        updateValues.push(qr_code_base64);
-      }
-      if (bank_account_number !== undefined) {
-        updateFields.push('bank_account_number = ?');
-        updateValues.push(bank_account_number);
-      }
-      if (bank_ifsc_code !== undefined) {
-        updateFields.push('bank_ifsc_code = ?');
-        updateValues.push(bank_ifsc_code);
-      }
-      if (bank_name !== undefined) {
-        updateFields.push('bank_name = ?');
-        updateValues.push(bank_name);
-      }
-      if (account_holder_name !== undefined) {
-        updateFields.push('account_holder_name = ?');
-        updateValues.push(account_holder_name);
-      }
-
-      updateValues.push(existing[0].id);
-      await query(
-        `UPDATE payment_gateway_settings SET ${updateFields.join(', ')} WHERE id = ?`,
-        updateValues
-      );
-    } else {
-      await query(
+    // Check if active column exists by trying to insert with it
+    let insertResult;
+    try {
+      // Try inserting with active column
+      insertResult = await query(
         `INSERT INTO payment_gateway_settings 
-         (upi_id, qr_code_url, qr_code_base64, bank_account_number, bank_ifsc_code, bank_name, account_holder_name)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         (upi_id, qr_code_url, bank_account_number, bank_ifsc_code, bank_name, account_holder_name, active, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, 'Yes', ?)`,
         [
           upi_id || process.env.UPI_ID || 'yourbusiness@upi',
           qr_code_url || process.env.QR_CODE_URL || '/images/upi-qr.jpg',
-          qr_code_base64 || null,
           bank_account_number || '',
           bank_ifsc_code || '',
           bank_name || '',
           account_holder_name || '',
+          req.user?.login || req.user?.id || 'admin',
         ]
       );
+    } catch (insertError) {
+      // If active column doesn't exist, insert without it
+      if (insertError.message.includes('active')) {
+        insertResult = await query(
+        `INSERT INTO payment_gateway_settings 
+           (upi_id, qr_code_url, bank_account_number, bank_ifsc_code, bank_name, account_holder_name, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          upi_id || process.env.UPI_ID || 'yourbusiness@upi',
+          qr_code_url || process.env.QR_CODE_URL || '/images/upi-qr.jpg',
+          bank_account_number || '',
+          bank_ifsc_code || '',
+          bank_name || '',
+          account_holder_name || '',
+            req.user?.login || req.user?.id || 'admin',
+        ]
+      );
+      } else {
+        throw insertError;
+      }
     }
+
+    logger.info(`Payment gateway settings updated and marked as active by ${req.user?.login || 'admin'}`);
 
     res.json({
       success: true,
-      message: 'Payment gateway settings updated successfully'
+      message: 'Payment gateway settings updated successfully and marked as active',
+      data: {
+        id: insertResult.insertId
+      }
     });
   } catch (error) {
     res.status(500).json({

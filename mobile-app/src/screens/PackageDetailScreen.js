@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { LinearGradient } from 'react-native-linear-gradient';
+import { default as Icon } from 'react-native-vector-icons/MaterialIcons';
 
 export default function PackageDetailScreen() {
   const navigation = useNavigation();
@@ -87,12 +87,8 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 30,
   },
   backButton: {
-    position: 'absolute',
-    top: 50,
-    left: 20,
     padding: 8,
-    backgroundColor: 'rgba(255,255,255,0.9)',
-    borderRadius: 20,
+    zIndex: 10,
   },
   headerTitle: {
     fontSize: 24,

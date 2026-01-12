@@ -7,14 +7,17 @@ import {
   RefreshControl,
   TouchableOpacity,
 } from 'react-native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { incomeAPI } from '../config/api';
 import Toast from 'react-native-toast-message';
-import { LinearGradient } from 'expo-linear-gradient';
+import { LinearGradient } from 'react-native-linear-gradient';
+import Icon from 'react-native-vector-icons/MaterialIcons';
 import { formatCurrency, formatDate } from '../utils/helpers';
 import { showErrorToast } from '../utils/errorHandler';
 import { useAuth } from '../context/AuthContext';
 
 export default function IncomeScreen() {
+  const navigation = useNavigation();
   const { user } = useAuth();
   const isAgent = user?.role === 'agent' || user?.typeid === 7;
   const [income, setIncome] = useState({ total: 0, direct: 0, binary: 0, team: 0, affiliate: 0, daily: 0, referral: 0 });
@@ -24,34 +27,56 @@ export default function IncomeScreen() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let isMounted = true;
-    if (isMounted) {
-      loadData();
-    }
-    return () => {
-      isMounted = false;
-    };
+    loadData();
   }, []);
+
+  // Refresh data when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      loadData();
+    }, [])
+  );
 
   const loadData = async () => {
     try {
       setLoading(true);
       const [breakdownResponse, historyResponse] = await Promise.all([
-        incomeAPI.getBreakdown().catch(err => ({ data: { byType: [], total: 0 } })),
-        incomeAPI.getHistory().catch(err => ({ data: [] })),
+        incomeAPI.getBreakdown().catch(err => {
+          console.error('Error fetching breakdown:', err);
+          return { data: { success: true, data: { byType: [], total: 0 } } };
+        }),
+        incomeAPI.getHistory().catch(err => {
+          console.error('Error fetching history:', err);
+          return { data: { success: true, data: [] } };
+        }),
       ]);
       
+      console.log('IncomeScreen - Breakdown Response:', JSON.stringify(breakdownResponse, null, 2));
+      
       // Handle different response formats
+      // API response structure: { success: true, data: { byType: [...], total: ... } }
+      // Axios wraps it: response.data = { success: true, data: { byType: [...], total: ... } }
       let breakdown = [];
       let total = 0;
       
-      if (breakdownResponse.data) {
-        if (breakdownResponse.data.byType && Array.isArray(breakdownResponse.data.byType)) {
-          breakdown = breakdownResponse.data.byType;
-        } else if (Array.isArray(breakdownResponse.data)) {
-          breakdown = breakdownResponse.data;
+      if (breakdownResponse?.data) {
+        // Check nested structure: breakdownResponse.data.data (axios wraps the server response)
+        const responseData = breakdownResponse.data.data || breakdownResponse.data;
+        
+        if (responseData?.byType && Array.isArray(responseData.byType)) {
+          breakdown = responseData.byType;
+          total = responseData.total || 0;
+        } else if (Array.isArray(responseData)) {
+          breakdown = responseData;
+          // Calculate total from breakdown array
+          total = breakdown.reduce((sum, item) => sum + (Number(item.total_amount) || Number(item.total) || 0), 0);
+        } else if (responseData?.byType && Array.isArray(responseData.byType)) {
+          breakdown = responseData.byType;
+          total = responseData.total || 0;
         }
-        total = breakdownResponse.data.total || breakdownResponse.data.total_amount || 0;
+        
+        console.log('IncomeScreen - Parsed Breakdown:', breakdown);
+        console.log('IncomeScreen - Parsed Total:', total);
       }
       
       // Calculate breakdown by type - handle both 'classify' and 'bonusType' fields
@@ -82,14 +107,18 @@ export default function IncomeScreen() {
       });
       
       // Handle different response formats for history
+      // API response structure: { success: true, data: [...] }
+      // Axios wraps it: response.data = { success: true, data: [...] }
       let historyData = [];
-      if (historyResponse.data) {
-        if (Array.isArray(historyResponse.data)) {
+      if (historyResponse?.data) {
+        const responseData = historyResponse.data.data || historyResponse.data;
+        if (Array.isArray(responseData)) {
+          historyData = responseData;
+        } else if (Array.isArray(historyResponse.data)) {
           historyData = historyResponse.data;
-        } else if (historyResponse.data.data && Array.isArray(historyResponse.data.data)) {
-          historyData = historyResponse.data.data;
         }
       }
+      console.log('IncomeScreen - History Data:', historyData.length, 'items');
       setHistory(historyData);
     } catch (error) {
       console.error('Error loading income:', error);
@@ -134,9 +163,18 @@ export default function IncomeScreen() {
         colors={['#D4AF37', '#B8941F']}
         style={styles.header}
       >
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backButton}
+        >
+          <Icon name="arrow-back" size={24} color="#fff" />
+        </TouchableOpacity>
+        <View style={styles.headerContent}>
         <Text style={styles.headerIcon}>💰</Text>
         <Text style={styles.headerTitle}>Income & Returns</Text>
         <Text style={styles.headerSubtitle}>Track your earnings</Text>
+        </View>
+        <View style={styles.placeholder} />
       </LinearGradient>
 
       <LinearGradient colors={['#D4AF37', '#B8941F']} style={styles.totalCard}>
@@ -248,6 +286,16 @@ const styles = StyleSheet.create({
     paddingTop: 50,
     borderBottomLeftRadius: 30,
     borderBottomRightRadius: 30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  backButton: {
+    padding: 8,
+    zIndex: 10,
+  },
+  headerContent: {
+    flex: 1,
     alignItems: 'center',
   },
   headerIcon: {
@@ -264,6 +312,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#fff',
     opacity: 0.9,
+  },
+  placeholder: {
+    width: 40,
   },
   totalCard: {
     margin: 16,

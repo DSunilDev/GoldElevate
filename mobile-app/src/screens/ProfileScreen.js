@@ -2,8 +2,8 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { LinearGradient } from 'react-native-linear-gradient';
+import { default as Icon } from 'react-native-vector-icons/MaterialIcons';
 
 export default function ProfileScreen() {
   const { user, logout } = useAuth();
@@ -28,7 +28,12 @@ export default function ProfileScreen() {
             </Text>
           </View>
           <Text style={styles.profileName}>
-            {user?.firstname || ''} {user?.lastname || ''} {!user?.firstname && !user?.lastname && user?.login ? user.login : ''}
+            {(() => {
+              const firstName = (user?.firstname || '').trim();
+              const lastName = (user?.lastname || '').trim();
+              const fullName = `${firstName} ${lastName}`.trim();
+              return fullName || user?.login || 'User';
+            })()}
           </Text>
           <Text style={styles.profileEmail}>{user?.email}</Text>
         </View>

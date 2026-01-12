@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,12 +11,14 @@ import {
   Modal,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { LinearGradient } from 'react-native-linear-gradient';
+import { default as Icon } from 'react-native-vector-icons/MaterialIcons';
 import { useAuth } from '../context/AuthContext';
 import Toast from 'react-native-toast-message';
 import { authAPI } from '../config/api';
+import api from '../config/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { sendOTP as msg91SendOTP, verifyOTP as msg91VerifyOTP, retryOTP as msg91RetryOTP, initializeMsg91Widget } from '../utils/msg91SDK';
 
 export default function AgentSignupScreen() {
   const navigation = useNavigation();
@@ -26,6 +28,17 @@ export default function AgentSignupScreen() {
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [otpVerified, setOtpVerified] = useState(false);
   const [otpCode, setOtpCode] = useState('');
+  const [msg91ReqId, setMsg91ReqId] = useState(null);
+
+  // Initialize MSG91 Widget on component mount
+  useEffect(() => {
+    try {
+      initializeMsg91Widget();
+      console.log('[MSG91] Widget initialized for agent signup');
+    } catch (error) {
+      console.error('[MSG91] Failed to initialize widget:', error);
+    }
+  }, []);
 
   const handleSendOTP = async () => {
     // Validate phone number
@@ -41,69 +54,75 @@ export default function AgentSignupScreen() {
 
     setLoading(true);
     setOtpCode(''); // Clear previous OTP
+    setMsg91ReqId(null); // Clear previous request ID
+
     try {
-      console.log('Sending OTP request for phone:', phoneNumber);
-      console.log('API Base URL:', require('../config/api').default?.defaults?.baseURL || 'Not available');
+      // Try MSG91 SDK first, fallback to backend if SDK fails
+      console.log('[Agent Signup] Attempting to send OTP via MSG91 SDK for phone:', phoneNumber);
+      const msg91Result = await msg91SendOTP(phoneNumber);
       
-      // Send OTP for agent signup with extended timeout
-      const response = await authAPI.sendAgentOTP({ phone: phoneNumber });
-      
-      if (response.data.success) {
+      if (msg91Result.success && msg91Result.reqId) {
+        // MSG91 SDK succeeded - no need to call backend (which would generate a different OTP)
+        setMsg91ReqId(msg91Result.reqId);
         setShowOtpModal(true);
         setOtpVerified(false);
-        // Show OTP to user (for testing - remove in production)
-        if (response.data.otp) {
-          Toast.show({
-            type: 'info',
-            text1: 'OTP Generated',
-            text2: `Enter OTP: ${response.data.otp}`,
-            visibilityTime: 10000,
-          });
-          console.log('🔑 OTP for agent signup:', response.data.otp);
-        }
         Toast.show({
           type: 'success',
-          text1: 'OTP Generated',
-          text2: 'Please enter the OTP',
+          text1: 'OTP Sent',
+          text2: 'Please enter the OTP sent to your phone',
         });
+        console.log('✅ MSG91 SDK OTP sent for agent signup, reqId:', msg91Result.reqId);
+      } else {
+        // Fallback to backend MSG91 API if SDK fails
+        // Backend will check if phone exists and generate OTP
+        console.warn('[Agent Signup] MSG91 SDK failed, falling back to backend MSG91 API');
+        try {
+          const response = await authAPI.sendAgentOTP({ phone: phoneNumber });
+          
+          if (response.data.success) {
+            setShowOtpModal(true);
+            setOtpVerified(false);
+            Toast.show({
+              type: 'success',
+              text1: 'OTP Sent',
+              text2: 'Please enter the OTP sent to your phone',
+            });
+            console.log('✅ OTP sent via backend MSG91 API for agent signup');
+          } else {
+            throw new Error(response.data.message || 'Failed to send OTP');
+          }
+        } catch (backendError) {
+          const errorMsg = backendError.response?.data?.message || backendError.response?.data?.error || backendError.message || '';
+          
+          if (errorMsg.includes('already registered') || errorMsg.includes('already exists') || errorMsg.includes('Phone number already')) {
+            Toast.show({
+              type: 'error',
+              text1: 'Phone Already Registered',
+              text2: 'This phone number is already registered. Please sign in instead.',
+              visibilityTime: 5000,
+            });
+            setLoading(false);
+            return;
+          }
+          throw backendError;
+        }
       }
     } catch (error) {
-      console.error('Send OTP error:', error);
-      let errorMsg = error.response?.data?.message || error.response?.data?.error || error.message || 'Failed to send OTP';
-      
-      // Handle timeout errors specifically
-      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
-        errorMsg = 'Request timed out. Please check your internet connection and try again.';
-        Toast.show({
-          type: 'error',
-          text1: 'Connection Timeout',
-          text2: errorMsg,
-          visibilityTime: 5000,
-        });
-      }
-      // If phone already exists, show specific message
-      else if (errorMsg.includes('already registered') || errorMsg.includes('already exists') || errorMsg.includes('Phone number already')) {
-        Toast.show({
-          type: 'error',
-          text1: 'Phone Already Registered',
-          text2: 'This phone number is already registered. Please sign in instead.',
-          visibilityTime: 5000,
-        });
-        setShowOtpModal(false);
-      } else {
-        Toast.show({
-          type: 'error',
-          text1: 'Error',
-          text2: errorMsg,
-        });
-      }
+      console.error('[MSG91 Agent Signup] Send OTP error:', error);
+      let errorMsg = error.message || 'Failed to send OTP';
+
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: errorMsg,
+      });
     } finally {
       setLoading(false);
     }
   };
 
-  // Manual OTP verification for agent signup
-  const handleManualOTPVerify = async () => {
+  // Verify OTP using MSG91 SDK
+  const handleVerifyOTP = async () => {
     if (!otpCode || otpCode.length < 4) {
       Toast.show({
         type: 'error',
@@ -115,47 +134,76 @@ export default function AgentSignupScreen() {
 
     setLoading(true);
     try {
-      console.log('Verifying OTP for agent signup:', { phone: phoneNumber, otp: otpCode });
-      
-      // Verify OTP
-      const verifyResponse = await authAPI.verifyAgentOTP({ 
-        phone: phoneNumber,
-        otp: otpCode.trim()
-      });
+      let verified = false;
+      let wasMsg91Verified = false; // Track if MSG91 SDK verified the OTP
 
-      console.log('Agent OTP verify response:', verifyResponse.data);
+      // Try MSG91 SDK verification first if reqId is available
+      if (msg91ReqId) {
+        console.log('[Agent Signup] Verifying OTP via MSG91 SDK with reqId:', msg91ReqId);
+        const msg91VerifyResult = await msg91VerifyOTP(msg91ReqId, otpCode.trim());
+        
+        if (msg91VerifyResult.success) {
+          verified = true;
+          wasMsg91Verified = true; // Mark that MSG91 SDK verified successfully
+          console.log('✅ MSG91 SDK OTP verified successfully for agent signup');
+        } else {
+          console.warn('[Agent Signup] MSG91 SDK verification failed, trying backend fallback');
+        }
+      }
 
-      if (verifyResponse.data.success) {
+      // Fallback to backend verification if MSG91 SDK not used or failed
+      if (!verified) {
+        console.log('[Agent Signup] Verifying OTP via backend MSG91 API');
+        const verifyResponse = await authAPI.verifyAgentOTP({ 
+          phone: phoneNumber,
+          otp: otpCode.trim()
+        });
+
+        verified = verifyResponse.data.success;
+        wasMsg91Verified = false; // Backend verified, not MSG91 SDK
+        
+        if (!verified) {
+          throw new Error(verifyResponse.data.message || 'Invalid OTP');
+        }
+      }
+
+      if (verified) {
         setOtpVerified(true);
-        
-        // Small delay to ensure backend OTP store is updated
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
+
         // Create agent account after OTP verification
         const signupData = {
           phone: phoneNumber,
         };
-        console.log('Calling agent signup with:', signupData);
-        const result = await authAPI.agentSignup(signupData);
         
+        // Pass msg91Verified flag if MSG91 SDK verified the OTP
+        if (wasMsg91Verified) {
+          signupData.msg91Verified = true;
+          console.log('[MSG91 Agent Signup] Sending signup with msg91Verified=true (MSG91 SDK verified)');
+        } else {
+          console.log('[MSG91 Agent Signup] Sending signup - backend verified OTP');
+        }
+        
+        console.log('[MSG91 Agent Signup] Calling agent signup with:', signupData);
+        const result = await authAPI.agentSignup(signupData);
+
         if (result.data.success) {
           setShowOtpModal(false);
-          
+
           // Store token and user data
           const { token, user } = result.data;
           await AsyncStorage.setItem('authToken', token);
           await AsyncStorage.setItem('userData', JSON.stringify(user));
-          
+
           // Update auth context
           setUser(user);
           setIsAuthenticated(true);
-          
+
           Toast.show({
             type: 'success',
             text1: 'Success',
             text2: 'Agent registration successful!',
           });
-          
+
           // Redirect to MemberTabs after successful agent signup
           setTimeout(() => {
             navigation.reset({
@@ -170,32 +218,22 @@ export default function AgentSignupScreen() {
             text2: result.data.message || 'Failed to create agent account',
           });
         }
-      } else {
-        Toast.show({
-          type: 'error',
-          text1: 'Invalid OTP',
-          text2: verifyResponse.data.message || 'Please enter the correct OTP',
-        });
       }
     } catch (error) {
-      console.error('OTP verification error:', error);
-      const errorMsg = error.response?.data?.message || error.response?.data?.error || error.message || 'Please try again';
-      
-      if (errorMsg.includes('expired')) {
+      console.error('[MSG91 Agent Signup] OTP verification error:', error);
+      let errorMsg = error.message || 'Please try again';
+
+      if (errorMsg.includes('expired') || errorMsg.includes('timeout')) {
         Toast.show({
           type: 'error',
           text1: 'OTP Expired',
           text2: 'Please request a new OTP',
         });
-        // Auto-resend OTP
-        setTimeout(() => {
-          handleSendOTP();
-        }, 1000);
-      } else if (errorMsg.includes('already registered') || errorMsg.includes('already exists')) {
+      } else if (errorMsg.includes('invalid') || errorMsg.includes('wrong')) {
         Toast.show({
           type: 'error',
-          text1: 'Phone Already Registered',
-          text2: 'This phone number is already registered. Please sign in instead.',
+          text1: 'Invalid OTP',
+          text2: 'Please enter the correct OTP',
         });
       } else {
         Toast.show({
@@ -206,6 +244,27 @@ export default function AgentSignupScreen() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Retry OTP using MSG91 SDK if reqId available, otherwise resend
+  const handleRetryOTP = async () => {
+    if (msg91ReqId) {
+      console.log('[Agent Signup] Retrying OTP via MSG91 SDK for reqId:', msg91ReqId);
+      const retryResult = await msg91RetryOTP(msg91ReqId);
+      if (retryResult.success) {
+        Toast.show({
+          type: 'success',
+          text1: 'OTP Resent',
+          text2: 'Please check your phone for the new OTP',
+        });
+      } else {
+        // Fallback to resend via backend
+        await handleSendOTP();
+      }
+    } else {
+      // If no reqId, just resend OTP
+      await handleSendOTP();
     }
   };
 
@@ -336,7 +395,7 @@ export default function AgentSignupScreen() {
 
               <TouchableOpacity
                 style={[styles.button, (loading || otpCode.length < 4) && styles.buttonDisabled]}
-                onPress={handleManualOTPVerify}
+                onPress={handleVerifyOTP}
                 disabled={loading || otpCode.length < 4}
               >
                 <Text style={styles.buttonText}>
@@ -346,7 +405,7 @@ export default function AgentSignupScreen() {
 
               <TouchableOpacity
                 style={styles.resendButton}
-                onPress={handleSendOTP}
+                onPress={handleRetryOTP}
                 disabled={loading}
               >
                 <Text style={styles.resendText}>
@@ -377,8 +436,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 50,
     left: 20,
+    zIndex: 10,
     padding: 8,
-    backgroundColor: 'rgba(255,255,255,0.9)',
+    backgroundColor: 'rgba(255,255,255,0.2)',
     borderRadius: 20,
   },
   headerIcon: {

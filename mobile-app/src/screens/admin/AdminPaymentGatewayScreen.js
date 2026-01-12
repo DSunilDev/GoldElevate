@@ -8,11 +8,12 @@ import {
   TextInput,
   Alert,
   Image,
+  Platform,
 } from 'react-native';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import Icon from 'react-native-vector-icons/MaterialIcons';
 import { adminAPI } from '../../config/api';
 import Toast from 'react-native-toast-message';
-import * as ImagePicker from 'expo-image-picker';
+import { launchImageLibrary } from 'react-native-image-picker';
 
 export default function AdminPaymentGatewayScreen({ navigation }) {
   const [loading, setLoading] = useState(false);
@@ -61,30 +62,104 @@ export default function AdminPaymentGatewayScreen({ navigation }) {
 
   const handlePickImage = async () => {
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission Required', 'Please grant camera roll permissions to upload QR code');
+      launchImageLibrary(
+        {
+          mediaType: 'photo',
+          quality: 0.8,
+          includeBase64: true, // Include base64 for upload (more reliable than FormData in React Native)
+        },
+        async (response) => {
+          if (response.didCancel || response.errorCode) {
         return;
       }
+          if (response.assets && response.assets[0]) {
+            const asset = response.assets[0];
+            
+            // Upload image to backend using base64 (more reliable than FormData in React Native)
+            setLoading(true);
+            try {
+              if (!asset.base64) {
+                throw new Error('Failed to get image data');
+              }
 
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-        base64: true,
+              // Convert base64 to data URL format
+              const base64Data = `data:${asset.type || 'image/jpeg'};base64,${asset.base64}`;
+              
+              console.log('📤 Uploading image via base64:', {
+                endpoint: '/admin/payment-gateway/upload-qr-base64',
+                type: asset.type || 'image/jpeg',
+                name: asset.fileName || `qr-code-${Date.now()}.jpg`,
+                base64Length: asset.base64.length,
+                platform: Platform.OS,
       });
 
-      if (!result.canceled && result.assets[0]) {
-        const base64 = `data:image/jpeg;base64,${result.assets[0].base64}`;
-        setFormData({ ...formData, qr_code_base64: base64 });
+              // Upload using base64 endpoint
+              const uploadResponse = await adminAPI.uploadQRImageBase64({
+                image: base64Data,
+                filename: asset.fileName || `qr-code-${Date.now()}.jpg`,
+                mimetype: asset.type || 'image/jpeg',
+              });
+              
+              console.log('✅ Upload response received:', uploadResponse?.data);
+              
+              if (uploadResponse?.data?.success) {
+                const imageUrl = uploadResponse.data.data.url;
+                setFormData({ 
+                  ...formData, 
+                  qr_code_url: imageUrl,
+                  qr_code_base64: base64Data // Store base64 for display
+                });
         Toast.show({
           type: 'success',
           text1: 'Success',
-          text2: 'QR code image selected',
-        });
-      }
+                  text2: 'QR code image uploaded successfully',
+                });
+              } else {
+                throw new Error(uploadResponse?.data?.message || 'Upload failed');
+              }
+            } catch (uploadError) {
+              console.error('Image upload error:', uploadError);
+              console.error('Upload error details:', {
+                message: uploadError.message,
+                code: uploadError.code,
+                response: uploadError.response?.data,
+                status: uploadError.response?.status,
+                url: uploadError.config?.url,
+                baseURL: uploadError.config?.baseURL,
+                fullURL: uploadError.config?.baseURL + uploadError.config?.url,
+                method: uploadError.config?.method,
+                headers: uploadError.config?.headers,
+                dataType: uploadError.config?.data?.constructor?.name,
+              });
+              
+              let errorMessage = 'Failed to upload image';
+              
+              if (uploadError.code === 'ERR_NETWORK' || uploadError.message === 'Network Error') {
+                errorMessage = 'Network error: Backend not reachable. Please:\n1. Check backend is running\n2. Run: adb reverse tcp:3000 tcp:3000\n3. Or use network IP in api.js';
+              } else if (uploadError.response?.status === 404) {
+                errorMessage = 'Upload endpoint not found. Please check backend is running and route is registered.';
+              } else if (uploadError.response?.status === 401) {
+                errorMessage = 'Authentication failed. Please login again.';
+              } else if (uploadError.response?.data?.message) {
+                errorMessage = uploadError.response.data.message;
+              } else if (uploadError.message) {
+                errorMessage = uploadError.message;
+              }
+              
+              Toast.show({
+                type: 'error',
+                text1: 'Upload Failed',
+                text2: errorMessage,
+                visibilityTime: 5000,
+              });
+            } finally {
+              setLoading(false);
+            }
+          }
+        }
+      );
     } catch (error) {
+      console.error('Image picker error:', error);
       Toast.show({
         type: 'error',
         text1: 'Error',
@@ -105,8 +180,13 @@ export default function AdminPaymentGatewayScreen({ navigation }) {
 
     setLoading(true);
     try {
-      console.log('Updating payment gateway with data:', formData);
-      const response = await adminAPI.updatePaymentGateway(formData);
+      // Don't send qr_code_base64 when saving - it's too large for database
+      // Only send qr_code_url which points to the uploaded file
+      const saveData = { ...formData };
+      delete saveData.qr_code_base64; // Remove base64 from save request
+      
+      console.log('Updating payment gateway with data:', saveData);
+      const response = await adminAPI.updatePaymentGateway(saveData);
       console.log('Update payment gateway response:', response);
       
       if (response?.data?.success !== false && (response?.data?.success === true || response?.status === 200)) {
@@ -180,11 +260,20 @@ export default function AdminPaymentGatewayScreen({ navigation }) {
             <Text style={styles.imagePickerText}>Upload QR Code Image</Text>
           </TouchableOpacity>
 
-          {formData.qr_code_url && (
+          {(formData.qr_code_url || formData.qr_code_base64) && (
             <Image
-              source={{ uri: formData.qr_code_url }}
+              source={{ 
+                uri: formData.qr_code_url || formData.qr_code_base64 
+              }}
               style={styles.qrPreview}
               resizeMode="contain"
+              onError={() => {
+                Toast.show({
+                  type: 'error',
+                  text1: 'Error',
+                  text2: 'Failed to load QR code image',
+                });
+              }}
             />
           )}
         </View>
@@ -270,6 +359,7 @@ const styles = StyleSheet.create({
   },
   backButton: {
     padding: 8,
+    zIndex:10,
   },
   headerTitle: {
     fontSize: 20,

@@ -21,20 +21,28 @@ router.post('/login', [
 
     // Check member login
     const members = await query(
-      `SELECT memberid, login, passwd, active, typeid, email, firstname, lastname, 
-       m_active, m_type, m_email, m_firstname, m_lastname, m_sid, m_pid, m_top, m_leg
-       FROM member WHERE login = ?`,
-      [login]
+      `SELECT memberid, login, passwd, signup_type, active, typeid, email, firstname, lastname, phone
+       FROM member WHERE login = ? OR phone = ?`,
+      [login, login]
     );
 
     if (members.length > 0) {
       const member = members[0];
       
+      // Check signup type: OTP signup users cannot login with password
+      if (member.signup_type === 'otp') {
+        return res.status(403).json({
+          success: false,
+          message: 'This account was created using OTP. Please login using OTP instead.',
+          error: 'OTP signup user cannot login with password'
+        });
+      }
+      
       // Verify password (assuming SHA1 hash with login prefix)
       const crypto = require('crypto');
-      const hashedPassword = crypto.createHash('sha1').update(login + passwd).digest('hex');
+      const hashedPassword = crypto.createHash('sha1').update(member.login + passwd).digest('hex');
       
-      if (member.passwd === hashedPassword && member.active === 'Yes') {
+      if (member.passwd === hashedPassword) {
         const token = jwt.sign(
           {
             memberid: member.memberid,
@@ -54,6 +62,7 @@ router.post('/login', [
             email: member.email,
             firstname: member.firstname,
             lastname: member.lastname,
+            phone: member.phone,
             typeid: member.typeid,
             role: 'member'
           }
@@ -140,15 +149,6 @@ router.post('/login-send-otp', [
     }
 
     const member = existing[0];
-    
-    // Check if account is active
-    if (member.active !== 'Yes') {
-      return res.status(403).json({
-        success: false,
-        message: 'Your account is not active. Please contact support.',
-        error: 'Account not active'
-      });
-    }
 
     // Generate OTP for login
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -169,19 +169,35 @@ router.post('/login-send-otp', [
     
     global.otpStore.set(phone, otpData);
 
-    // Send OTP via MSG91
+    // Send OTP via MSG91 (with timeout to prevent hanging)
+    // Use Promise.race to ensure we don't wait more than 8 seconds for MSG91
+    const msg91Promise = msg91SendOTP(phone, otp).catch(err => ({
+      success: false,
+      message: err.message || 'MSG91 request failed',
+      error: err
+    }));
+    
+    const timeoutPromise = new Promise(resolve => {
+      setTimeout(() => resolve({
+        success: false,
+        message: 'MSG91 request timed out',
+        timeout: true
+      }), 8000); // 8 second timeout
+    });
+    
     try {
-      const msg91Result = await msg91SendOTP(phone, otp);
+      const msg91Result = await Promise.race([msg91Promise, timeoutPromise]);
       if (msg91Result.success) {
-        logger.info(`Login OTP sent via MSG91 to ${phone} (memberid: ${member.memberid})`);
-        console.log(`[OTP] Login OTP sent via MSG91 to ${phone}: ${otp}`);
+        logger.info(`Login OTP sent via MSG91 to ${phone} (memberid: ${member.memberid}), requestId: ${msg91Result.requestId}`);
+        console.log(`[OTP] ✅ Login OTP sent via MSG91 to ${phone}: ${otp}, requestId: ${msg91Result.requestId}`);
       } else {
-        logger.warn(`MSG91 OTP send failed for ${phone}: ${msg91Result.message}`);
-        console.log(`[OTP] MSG91 failed, OTP for ${phone}: ${otp} (fallback)`);
+        logger.warn(`MSG91 OTP send failed for ${phone}: ${msg91Result.message || msg91Result.error || 'Unknown error'}`);
+        console.log(`[OTP] ❌ MSG91 failed for ${phone}: ${msg91Result.message || msg91Result.error || 'Unknown error'}`);
+        console.log(`[OTP] Full MSG91 error:`, JSON.stringify(msg91Result));
       }
     } catch (msg91Error) {
       logger.error(`MSG91 OTP send error for ${phone}:`, msg91Error);
-      console.log(`[OTP] MSG91 error, OTP for ${phone}: ${otp} (fallback)`);
+      console.log(`[OTP] ❌ MSG91 exception for ${phone}:`, msg91Error.message);
     }
 
     // ALWAYS log OTP to console for development/testing
@@ -211,7 +227,8 @@ router.post('/login-send-otp', [
 // Verify OTP for login
 router.post('/login-verify-otp', [
   body('phone').matches(/^[6-9]\d{9}$/).withMessage('Valid 10-digit phone number required'),
-  body('otp').isLength({ min: 4, max: 6 }).withMessage('OTP code must be 4-6 digits')
+  body('otp').optional().isLength({ min: 4, max: 6 }).withMessage('OTP code must be 4-6 digits'),
+  body('msg91Verified').optional().isBoolean().withMessage('msg91Verified must be a boolean')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -219,9 +236,22 @@ router.post('/login-verify-otp', [
       return res.status(400).json({ success: false, errors: errors.array() });
     }
 
-    const { phone, otp } = req.body;
+    const { phone, otp, msg91Verified } = req.body;
 
-    logger.info(`Login OTP verification attempt for ${phone}, OTP: ${otp}`);
+    logger.info(`Login OTP verification attempt for ${phone}, OTP: ${otp}, msg91Verified: ${msg91Verified}, type: ${typeof msg91Verified}`);
+    logger.info(`Full request body: ${JSON.stringify({ phone, otp: otp ? '***' : undefined, msg91Verified })}`);
+    
+    // Check if MSG91 SDK verified the OTP
+    const isMsg91Verified = msg91Verified === true || msg91Verified === 'true' || msg91Verified === 1;
+    
+    if (!isMsg91Verified) {
+      // Standard OTP verification - verify against stored OTP
+      if (!otp) {
+        return res.status(400).json({
+          success: false,
+          message: 'OTP code is required when msg91Verified is not true.'
+        });
+      }
     
     // Verify against stored OTP
     if (!global.otpStore || !global.otpStore.has(phone)) {
@@ -266,12 +296,19 @@ router.post('/login-verify-otp', [
         success: false,
         message: 'Invalid OTP code. Please check and try again.'
       });
+      }
+      
+      // Clear OTP from store after successful verification
+      global.otpStore.delete(phone);
+    } else {
+      // MSG91 SDK verified the OTP - skip backend OTP comparison
+      logger.info(`MSG91 SDK verified OTP for login, phone: ${phone} - bypassing backend OTP check`);
     }
 
     // OTP verified - get member details and generate login token
     const members = await query(
       `SELECT memberid, login, phone, active, typeid, email, firstname, lastname 
-       FROM member WHERE phone = ? AND active = 'Yes'`,
+       FROM member WHERE phone = ?`,
       [phone]
     );
 
@@ -279,7 +316,7 @@ router.post('/login-verify-otp', [
       global.otpStore.delete(phone);
       return res.status(404).json({
         success: false,
-        message: 'Account not found or inactive.'
+        message: 'Account not found.'
       });
     }
 
@@ -300,9 +337,7 @@ router.post('/login-verify-otp', [
       { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
     );
 
-    // Clear OTP from store after successful verification
-    global.otpStore.delete(phone);
-    logger.info(`Login OTP verified successfully for phone: ${phone}, memberid: ${member.memberid}, role: ${role}`);
+    logger.info(`Login OTP verified successfully for phone: ${phone}, memberid: ${member.memberid}, role: ${role}, msg91Verified: ${isMsg91Verified}`);
 
     res.json({
       success: true,
@@ -373,32 +408,170 @@ router.post('/send-otp', [
     
     global.otpStore.set(phone, otpData);
 
-    // Send OTP via MSG91
+    // Send OTP via MSG91 (with timeout to prevent hanging)
+    // Use Promise.race to ensure we don't wait more than 8 seconds for MSG91
+    const msg91Promise = msg91SendOTP(phone, otp).catch(err => ({
+      success: false,
+      message: err.message || 'MSG91 request failed',
+      error: err
+    }));
+    
+    const timeoutPromise = new Promise(resolve => {
+      setTimeout(() => resolve({
+        success: false,
+        message: 'MSG91 request timed out',
+        timeout: true
+      }), 8000); // 8 second timeout
+    });
+    
     try {
-      const msg91Result = await msg91SendOTP(phone, otp);
+      const msg91Result = await Promise.race([msg91Promise, timeoutPromise]);
       if (msg91Result.success) {
-        logger.info(`Signup OTP sent via MSG91 to ${phone}`);
-        console.log(`[OTP] Signup OTP sent via MSG91 to ${phone}: ${otp}`);
+        logger.info(`Signup OTP sent via MSG91 to ${phone}, requestId: ${msg91Result.requestId}`);
+        console.log(`[OTP] ✅ Signup OTP sent via MSG91 to ${phone}: ${otp}, requestId: ${msg91Result.requestId}`);
       } else {
-        logger.warn(`MSG91 OTP send failed for ${phone}: ${msg91Result.message}`);
-        console.log(`[OTP] MSG91 failed, OTP for ${phone}: ${otp} (fallback)`);
+        logger.warn(`MSG91 OTP send failed for ${phone}: ${msg91Result.message || msg91Result.error || 'Unknown error'}`);
+        console.log(`[OTP] ❌ MSG91 failed for ${phone}: ${msg91Result.message || msg91Result.error || 'Unknown error'}`);
+        console.log(`[OTP] Full MSG91 error:`, JSON.stringify(msg91Result));
       }
     } catch (msg91Error) {
       logger.error(`MSG91 OTP send error for ${phone}:`, msg91Error);
-      console.log(`[OTP] MSG91 error, OTP for ${phone}: ${otp} (fallback)`);
+      console.log(`[OTP] ❌ MSG91 exception for ${phone}:`, msg91Error.message);
     }
+
+    // ALWAYS log OTP to console for development/testing (even when MSG91 is configured)
+    console.log('═══════════════════════════════════════════════════');
+    console.log(`[OTP] Signup OTP for ${phone}: ${otp}`);
+    console.log(`[OTP] Purpose: Signup`);
+    console.log('═══════════════════════════════════════════════════');
+    logger.info(`[OTP] Signup OTP generated for ${phone}: ${otp}`);
 
     res.json({
       success: true,
       message: 'OTP sent successfully. Please check your phone and verify to continue.',
-      // Only show OTP if MSG91 not configured
-      otp: process.env.MSG91_AUTH_KEY ? undefined : otp
+      // Always show OTP in response for testing/debugging (remove in production)
+      otp: otp
     });
   } catch (error) {
     logger.error('Send OTP error:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to validate phone number',
+      error: error.message
+    });
+  }
+});
+
+// Verify MSG91 widget access token
+router.post('/verify-msg91-token', [
+  body('phone').matches(/^[6-9]\d{9}$/).withMessage('Valid 10-digit phone number required'),
+  body('accessToken').notEmpty().withMessage('MSG91 access token is required')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, errors: errors.array() });
+    }
+
+    const { phone, accessToken } = req.body;
+    const authKey = process.env.MSG91_AUTH_KEY;
+
+    if (!authKey) {
+      logger.warn('MSG91_AUTH_KEY not configured, skipping token verification');
+      // If MSG91 not configured, fall back to manual OTP verification
+      return res.status(400).json({
+        success: false,
+        message: 'MSG91 not configured. Please use manual OTP verification.',
+        error: 'MSG91 not configured'
+      });
+    }
+
+    // Verify token with MSG91 API
+    const https = require('https');
+    const verifyData = JSON.stringify({
+      authkey: authKey,
+      'access-token': accessToken
+    });
+
+    const options = {
+      hostname: 'control.msg91.com',
+      path: '/api/v5/widget/verifyAccessToken',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Content-Length': Buffer.byteLength(verifyData)
+      }
+    };
+
+    return new Promise((resolve) => {
+      const req = https.request(options, (response) => {
+        let data = '';
+
+        response.on('data', (chunk) => {
+          data += chunk;
+        });
+
+        response.on('end', () => {
+          try {
+            const result = JSON.parse(data);
+            
+            if (result.type === 'success' || result.status === 'success') {
+              // Token verified - mark OTP as verified in store
+              if (!global.otpStore) {
+                global.otpStore = new Map();
+              }
+              
+              const otpData = global.otpStore.get(phone) || {};
+              global.otpStore.set(phone, {
+                ...otpData,
+                phone: phone,
+                verified: true,
+                verifiedAt: Date.now(),
+                purpose: otpData.purpose || 'signup'
+              });
+
+              logger.info(`MSG91 token verified successfully for phone: ${phone}`);
+              resolve(res.json({
+                success: true,
+                message: 'OTP verified successfully'
+              }));
+            } else {
+              logger.warn(`MSG91 token verification failed for phone: ${phone}, response: ${JSON.stringify(result)}`);
+              resolve(res.status(400).json({
+                success: false,
+                message: result.message || 'OTP verification failed',
+                error: 'Token verification failed'
+              }));
+            }
+          } catch (parseError) {
+            logger.error(`Failed to parse MSG91 verification response: ${parseError.message}`);
+            resolve(res.status(500).json({
+              success: false,
+              message: 'Failed to verify OTP token',
+              error: parseError.message
+            }));
+          }
+        });
+      });
+
+      req.on('error', (error) => {
+        logger.error(`MSG91 token verification request failed: ${error.message}`);
+        resolve(res.status(500).json({
+          success: false,
+          message: 'Failed to verify OTP token',
+          error: error.message
+        }));
+      });
+
+      req.write(verifyData);
+      req.end();
+    });
+  } catch (error) {
+    logger.error('Verify MSG91 token error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to verify OTP token',
       error: error.message
     });
   }
@@ -557,9 +730,10 @@ router.post('/signup', [
       return res.status(400).json({ success: false, errors: errors.array() });
     }
 
-    const { phone, packageid, sponsorid, firstname, lastname, password: userPassword, id_proof, photo } = req.body;
+    const { phone, packageid, sponsorid, firstname, lastname, password: userPassword, id_proof, photo, msg91Verified } = req.body;
 
-    logger.info(`Signup attempt for phone: ${phone}, method: ${userPassword ? 'password' : 'otp'}`);
+    logger.info(`Signup attempt for phone: ${phone}, method: ${userPassword ? 'password' : 'otp'}, msg91Verified: ${msg91Verified}`);
+    logger.info(`Signup request body: ${JSON.stringify({ phone, msg91Verified, hasPassword: !!userPassword })}`);
 
     // Check if phone already exists FIRST (before OTP check)
     const existing = await query(
@@ -579,6 +753,31 @@ router.post('/signup', [
     // Verify OTP was verified (only required if password is not provided)
     // If password is provided, skip OTP verification
     if (!userPassword) {
+      // Check if msg91Verified flag is provided (from MSG91 SDK verification)
+      // Handle both boolean true and string "true"
+      const isMsg91Verified = msg91Verified === true || msg91Verified === 'true' || msg91Verified === 1;
+      
+      logger.info(`Checking OTP verification: msg91Verified=${msg91Verified}, isMsg91Verified=${isMsg91Verified}, type=${typeof msg91Verified}`);
+      
+      if (isMsg91Verified) {
+        // MSG91 SDK verified the OTP, mark it as verified in backend store
+        if (!global.otpStore) {
+          global.otpStore = new Map();
+        }
+        
+        const existingOtpData = global.otpStore.get(phone) || {};
+        global.otpStore.set(phone, {
+          ...existingOtpData,
+          phone: phone,
+          verified: true,
+          verifiedAt: Date.now(),
+          purpose: 'signup',
+          msg91Verified: true
+        });
+        
+        logger.info(`MSG91 SDK verified OTP for signup, phone: ${phone}`);
+      } else {
+        // Standard OTP verification check
       if (!global.otpStore || !global.otpStore.has(phone)) {
         logger.warn(`OTP store missing for phone: ${phone}. Store keys: ${global.otpStore ? Array.from(global.otpStore.keys()).join(', ') : 'null'}`);
         return res.status(400).json({
@@ -598,6 +797,7 @@ router.post('/signup', [
           message: 'Please verify your phone number first. Please request a new OTP.',
           error: 'OTP not verified'
         });
+        }
       }
     }
 
@@ -615,42 +815,6 @@ router.post('/signup', [
       const randomPassword = crypto.randomBytes(8).toString('hex');
       finalPassword = crypto.createHash('sha1').update(username + randomPassword).digest('hex');
       logger.info(`Generated random password for phone: ${phone}`);
-    }
-
-    // Get package first (needed for member creation)
-    let packageId = packageid || null;
-    
-    if (!packageId) {
-      // Try to get first available package
-      const availablePackages = await query('SELECT typeid FROM def_type ORDER BY typeid LIMIT 1');
-      if (availablePackages && availablePackages.length > 0) {
-        packageId = availablePackages[0].typeid;
-        logger.info(`Using default package ${packageId} for phone: ${phone}`);
-      } else {
-        // Create a default package if none exist (use typeid = 1)
-        try {
-          await query(
-            'INSERT INTO def_type (typeid, short, name, price) VALUES (1, ?, ?, ?)',
-            ['DEFAULT', 'Default Package', 0]
-          );
-          packageId = 1;
-          logger.info(`Created default package ${packageId} for phone: ${phone}`);
-        } catch (createError) {
-          // If package already exists, use it
-          if (createError.code === 'ER_DUP_ENTRY' || createError.code === 'ER_DUP_KEY') {
-            packageId = 1;
-            logger.info(`Using existing default package ${packageId} for phone: ${phone}`);
-          } else {
-            logger.error(`Failed to create default package: ${createError.message}`);
-            return res.status(500).json({ success: false, message: 'No packages available. Please contact administrator.' });
-          }
-        }
-      }
-    } else {
-      const packageCheckRows = await query('SELECT typeid FROM def_type WHERE typeid = ?', [packageId]);
-      if (!packageCheckRows || packageCheckRows.length === 0) {
-        return res.status(400).json({ success: false, message: 'Invalid package ID' });
-      }
     }
 
     // Get sponsor (default to existing member or 1)
@@ -673,11 +837,22 @@ router.post('/signup', [
     }
     const nextMemberId = maxId + 1;
 
+    // Determine signup type: 'password' if user provided password, 'otp' otherwise
+    const signupType = userPassword ? 'password' : 'otp';
+    
+    // Insert into member table WITHOUT typeid - typeid will be set when user purchases their first investment package
+    // TODO: Store id_proof and photo in a separate table or file storage if needed
     const result = await query(
-      `INSERT INTO member (memberid, login, passwd, phone, firstname, lastname, id_proof, photo, sid, typeid, active, signuptime, created)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Yes', NOW(), NOW())`,
-      [nextMemberId, username, finalPassword, phone, firstname || null, lastname || null, id_proof || null, photo || null, finalSponsor, packageId]
+      `INSERT INTO member (memberid, login, passwd, signup_type, phone, firstname, lastname, sid, typeid, active, signuptime, created)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'No', NOW(), NOW())`,
+      [nextMemberId, username, finalPassword, signupType, phone, firstname || null, lastname || null, finalSponsor]
     );
+    
+    // Log id_proof and photo if provided (for future implementation)
+    if (id_proof || photo) {
+      logger.info(`Member ${nextMemberId} provided id_proof: ${id_proof ? 'yes' : 'no'}, photo: ${photo ? 'yes' : 'no'}`);
+      // TODO: Store id_proof and photo in file storage or separate table
+    }
 
     const memberId = nextMemberId; // Use calculated ID since memberid is not AUTO_INCREMENT
 
@@ -687,63 +862,8 @@ router.post('/signup', [
       logger.info(`OTP cleared from store after successful signup for phone: ${phone}`);
     }
 
-      // Create sale record only if package exists
-      if (packageId) {
-        const packageDataRows = await query('SELECT price FROM def_type WHERE typeid = ?', [packageId]);
-        const packageData = packageDataRows && packageDataRows.length > 0 ? packageDataRows[0] : null;
-        if (packageData && packageData.price) {
-        await query(
-          `INSERT INTO sale (memberid, typeid, amount, signuptype, paystatus, active, created)
-           VALUES (?, ?, ?, 'Yes', 'Pending', 'No', NOW())`,
-          [memberId, packageId, packageData.price]
-        );
-
-        // Credit referrer with referral bonus (20% of package price)
-        if (finalSponsor && finalSponsor !== 1 && finalSponsor !== memberId) {
-          try {
-            const referralBonus = Math.round(packageData.price * 0.2);
-            
-            // Get referrer's current balance
-            const refBalance = await query(
-              `SELECT balance, weekid FROM income_ledger 
-               WHERE memberid = ? 
-               ORDER BY ledgerid DESC LIMIT 1`,
-              [finalSponsor]
-            );
-
-            const currentRefBalance = refBalance?.[0]?.balance || refBalance?.balance || 0;
-            const weekid = refBalance?.[0]?.weekid || refBalance?.weekid || 0;
-            const newRefBalance = currentRefBalance + referralBonus;
-
-            // Create income record for referrer
-            await query(
-              `INSERT INTO income (memberid, classify, amount, paystatus, created)
-               VALUES (?, 'direct', ?, 'new', NOW())`,
-              [finalSponsor, referralBonus]
-            );
-
-            // Create ledger entry for referrer
-            await query(
-              `INSERT INTO income_ledger 
-               (memberid, weekid, amount, balance, status, remark, created)
-               VALUES (?, ?, ?, ?, 'In', ?, NOW())`,
-              [
-                finalSponsor,
-                weekid,
-                referralBonus,
-                newRefBalance,
-                `Referral bonus for member ${memberId}`
-              ]
-            );
-
-            logger.info(`Referral bonus credited: Sponsor ${finalSponsor}, Amount: ₹${referralBonus}, New Member: ${memberId}`);
-          } catch (refError) {
-            logger.error(`Error crediting referral bonus:`, refError);
-            // Don't fail signup if referral credit fails
-          }
-        }
-      }
-    }
+    // Note: Referral bonuses will be credited when the user purchases their first investment package
+    // (handled in payment approval logic in admin.js and payment.js)
 
     // Generate token
     const token = jwt.sign(
@@ -752,7 +872,7 @@ router.post('/signup', [
       { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
     );
 
-    // Clear OTP from store after successful signup
+    // Clear OTP from store after successful signup (duplicate check - already cleared above)
     if (global.otpStore) {
       global.otpStore.delete(phone);
     }
@@ -764,10 +884,13 @@ router.post('/signup', [
         memberid: memberId,
         login: username,
         phone,
-        typeid: packageId,
+        firstname: firstname || null,
+        lastname: lastname || null,
+        email: null,
+        typeid: null, // typeid will be set when user purchases their first investment package
         role: 'member'
       },
-      message: 'Account created successfully. Please complete payment to activate.'
+      message: 'Account created successfully. Please purchase an investment package to activate your account.'
     });
   } catch (error) {
     logger.error('Signup error:', error);
@@ -823,15 +946,57 @@ router.post('/agent-send-otp', [
     
     global.otpStore.set(phone, otpData);
 
-    logger.info(`Agent signup OTP generated for ${phone}: ${otp}`);
-    console.log(`[OTP] Agent signup OTP for ${phone}: ${otp}`); // Also log to console for easy access
+    // Send OTP via MSG91 (with timeout to prevent hanging)
+    // Use Promise.race to ensure we don't wait more than 8 seconds for MSG91
+    console.log(`[Agent Signup] About to call msg91SendOTP for phone: ${phone}, OTP: ${otp}`);
+    const msg91Promise = msg91SendOTP(phone, otp).catch(err => {
+      console.log(`[Agent Signup] msg91SendOTP catch block triggered:`, err.message);
+      return {
+      success: false,
+      message: err.message || 'MSG91 request failed',
+      error: err
+    };
+    });
+    
+    const timeoutPromise = new Promise(resolve => {
+      setTimeout(() => resolve({
+        success: false,
+        message: 'MSG91 request timed out',
+        timeout: true
+      }), 8000); // 8 second timeout
+    });
+    
+    try {
+      const msg91Result = await Promise.race([msg91Promise, timeoutPromise]);
+      console.log(`[MSG91] Agent signup response for ${phone}:`, JSON.stringify(msg91Result));
+      logger.info(`[MSG91] Agent signup response for ${phone}:`, msg91Result);
+      
+      if (msg91Result.success) {
+        logger.info(`Agent signup OTP sent via MSG91 to ${phone}, requestId: ${msg91Result.requestId}`);
+        console.log(`[OTP] ✅ Agent signup OTP sent via MSG91 to ${phone}: ${otp}, requestId: ${msg91Result.requestId}`);
+      } else {
+        logger.warn(`MSG91 OTP send failed for ${phone}: ${msg91Result.message || msg91Result.error || 'Unknown error'}`);
+        console.log(`[OTP] ❌ MSG91 failed for agent signup ${phone}: ${msg91Result.message || msg91Result.error || 'Unknown error'}`);
+        console.log(`[OTP] Full MSG91 error response:`, JSON.stringify(msg91Result));
+      }
+    } catch (msg91Error) {
+      logger.error(`MSG91 OTP send error for ${phone}:`, msg91Error);
+      console.log(`[OTP] ❌ MSG91 exception for agent signup ${phone}:`, msg91Error.message);
+      console.log(`[OTP] Full error:`, msg91Error);
+    }
+
+    // ALWAYS log OTP to console for development/testing (even when MSG91 is configured)
+    console.log('═══════════════════════════════════════════════════');
+    console.log(`[OTP] Agent Signup OTP for ${phone}: ${otp}`);
+    console.log(`[OTP] Purpose: Agent Signup`);
+    console.log('═══════════════════════════════════════════════════');
+    logger.info(`[OTP] Agent signup OTP generated for ${phone}: ${otp}`);
 
     res.json({
       success: true,
       message: 'OTP sent successfully. Please verify to complete agent registration.',
-      // For development/testing - show OTP in response
-      // Remove this in production!
-      otp: otp // TEMPORARY: For testing only
+      // Only show OTP in response if MSG91 not configured (for testing)
+      otp: process.env.MSG91_AUTH_KEY ? undefined : otp
     });
   } catch (error) {
     logger.error('Agent send OTP error:', error);
@@ -925,7 +1090,8 @@ router.post('/agent-verify-otp', [
 
 // Agent signup endpoint (phone-based with OTP verification)
 router.post('/agent-signup', [
-  body('phone').matches(/^[6-9]\d{9}$/).withMessage('Valid 10-digit phone number required')
+  body('phone').matches(/^[6-9]\d{9}$/).withMessage('Valid 10-digit phone number required'),
+  body('msg91Verified').optional().isBoolean().withMessage('msg91Verified must be a boolean')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -933,9 +1099,9 @@ router.post('/agent-signup', [
       return res.status(400).json({ success: false, errors: errors.array() });
     }
 
-    const { phone } = req.body;
+    const { phone, msg91Verified } = req.body;
 
-    logger.info(`Agent signup attempt for phone: ${phone}`);
+    logger.info(`Agent signup attempt for phone: ${phone}, msg91Verified: ${msg91Verified}`);
 
     // Check if phone already exists FIRST (before OTP check)
     const existing = await query(
@@ -952,37 +1118,58 @@ router.post('/agent-signup', [
       });
     }
 
-    // Verify OTP was verified
-    if (!global.otpStore || !global.otpStore.has(phone)) {
-      logger.warn(`OTP store missing for phone: ${phone}. Store keys: ${global.otpStore ? Array.from(global.otpStore.keys()).join(', ') : 'null'}`);
-      return res.status(400).json({
-        success: false,
-        message: 'Please verify your phone number first. Please request a new OTP.',
-        error: 'OTP not verified'
+    // Check if msg91Verified flag is provided (from MSG91 SDK verification)
+    const isMsg91Verified = msg91Verified === true || msg91Verified === 'true' || msg91Verified === 1;
+    
+    if (isMsg91Verified) {
+      // MSG91 SDK verified the OTP, mark it as verified in backend store
+      if (!global.otpStore) {
+        global.otpStore = new Map();
+      }
+      
+      const existingOtpData = global.otpStore.get(phone) || {};
+      global.otpStore.set(phone, {
+        ...existingOtpData,
+        phone: phone,
+        verified: true,
+        verifiedAt: Date.now(),
+        purpose: 'agent-signup',
+        msg91Verified: true
       });
-    }
+      
+      logger.info(`MSG91 SDK verified OTP for agent signup, phone: ${phone}`);
+    } else {
+      // Standard OTP verification check
+      if (!global.otpStore || !global.otpStore.has(phone)) {
+        logger.warn(`OTP store missing for phone: ${phone}. Store keys: ${global.otpStore ? Array.from(global.otpStore.keys()).join(', ') : 'null'}`);
+        return res.status(400).json({
+          success: false,
+          message: 'Please verify your phone number first. Please request a new OTP.',
+          error: 'OTP not verified'
+        });
+      }
 
-    const otpData = global.otpStore.get(phone);
-    logger.info(`OTP data for agent signup: ${JSON.stringify({ verified: otpData.verified, phone: otpData.phone, purpose: otpData.purpose, hasVerified: otpData.hasOwnProperty('verified') })}`);
-    
-    // Check if OTP was for agent signup
-    if (otpData.purpose !== 'agent-signup') {
-      logger.warn(`OTP purpose mismatch for phone: ${phone}. Expected: agent-signup, Got: ${otpData.purpose}`);
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid OTP. Please request a new agent signup OTP.',
-        error: 'OTP purpose mismatch'
-      });
+      const otpData = global.otpStore.get(phone);
+      
+      if (otpData.purpose !== 'agent-signup') {
+        logger.warn(`OTP purpose mismatch for phone: ${phone}`);
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid OTP. Please request a new agent signup OTP.'
+        });
+      }
+      
+      if (!otpData.verified) {
+        logger.warn(`OTP not verified for phone: ${phone}. OTP data: ${JSON.stringify(otpData)}`);
+        return res.status(400).json({
+          success: false,
+          message: 'Please verify your phone number first. Please request a new OTP.',
+          error: 'OTP not verified'
+        });
+      }
     }
     
-    if (!otpData.verified) {
-      logger.warn(`OTP not verified for phone: ${phone}. OTP data: ${JSON.stringify(otpData)}`);
-      return res.status(400).json({
-        success: false,
-        message: 'Please verify your phone number first. Please request a new OTP.',
-        error: 'OTP not verified'
-      });
-    }
+    logger.info(`Agent signup proceeding for phone: ${phone} (OTP verified${isMsg91Verified ? ' via MSG91 SDK' : ' via backend'})`);
 
     // Generate username from phone (or use phone as username)
     const username = `agent${phone}`;
@@ -1140,15 +1327,57 @@ router.post('/admin-send-otp', [
     
     global.otpStore.set(phone, otpData);
 
-    logger.info(`Admin signup OTP generated for ${phone}: ${otp}`);
-    console.log(`[OTP] Admin signup OTP for ${phone}: ${otp}`); // Also log to console for easy access
+    // Send OTP via MSG91 (with timeout to prevent hanging)
+    // Use Promise.race to ensure we don't wait more than 8 seconds for MSG91
+    console.log(`[Admin Signup] About to call msg91SendOTP for phone: ${phone}, OTP: ${otp}`);
+    const msg91Promise = msg91SendOTP(phone, otp).catch(err => {
+      console.log(`[Admin Signup] msg91SendOTP catch block triggered:`, err.message);
+      return {
+      success: false,
+      message: err.message || 'MSG91 request failed',
+      error: err
+    };
+    });
+    
+    const timeoutPromise = new Promise(resolve => {
+      setTimeout(() => resolve({
+        success: false,
+        message: 'MSG91 request timed out',
+        timeout: true
+      }), 8000); // 8 second timeout
+    });
+    
+    try {
+      const msg91Result = await Promise.race([msg91Promise, timeoutPromise]);
+      console.log(`[MSG91] Admin signup response for ${phone}:`, JSON.stringify(msg91Result));
+      logger.info(`[MSG91] Admin signup response for ${phone}:`, msg91Result);
+      
+      if (msg91Result.success) {
+        logger.info(`Admin signup OTP sent via MSG91 to ${phone}`);
+        console.log(`[OTP] ✅ Admin signup OTP sent via MSG91 to ${phone}: ${otp}`);
+      } else {
+        logger.warn(`MSG91 OTP send failed for ${phone}: ${msg91Result.message || 'Unknown error'}`);
+        console.log(`[OTP] ❌ MSG91 failed for admin signup ${phone}: ${msg91Result.message || 'Unknown error'}`);
+        console.log(`[OTP] Full MSG91 error response:`, msg91Result);
+      }
+    } catch (msg91Error) {
+      logger.error(`MSG91 OTP send error for ${phone}:`, msg91Error);
+      console.log(`[OTP] ❌ MSG91 exception for admin signup ${phone}:`, msg91Error.message);
+      console.log(`[OTP] Full error:`, msg91Error);
+    }
+
+    // ALWAYS log OTP to console for development/testing (even when MSG91 is configured)
+    console.log('═══════════════════════════════════════════════════');
+    console.log(`[OTP] Admin Signup OTP for ${phone}: ${otp}`);
+    console.log(`[OTP] Purpose: Admin Signup`);
+    console.log('═══════════════════════════════════════════════════');
+    logger.info(`[OTP] Admin signup OTP generated for ${phone}: ${otp}`);
 
     res.json({
       success: true,
       message: 'OTP sent successfully. Please verify to complete admin registration.',
-      // For development/testing - show OTP in response
-      // Remove this in production!
-      otp: otp // TEMPORARY: For testing only
+      // Only show OTP in response if MSG91 not configured (for testing)
+      otp: process.env.MSG91_AUTH_KEY ? undefined : otp
     });
   } catch (error) {
     logger.error('Admin send OTP error:', error);
@@ -1337,7 +1566,8 @@ router.post('/admin-login-send-otp', [
 // Verify OTP for admin login
 router.post('/admin-login-verify-otp', [
   body('phone').matches(/^\d{10}$/).withMessage('Valid 10-digit phone number required'),
-  body('otp').isLength({ min: 4, max: 6 }).withMessage('OTP code must be 4-6 digits')
+  body('otp').optional().isLength({ min: 4, max: 6 }).withMessage('OTP code must be 4-6 digits'),
+  body('msg91Verified').optional().isBoolean().withMessage('msg91Verified must be a boolean')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -1345,9 +1575,21 @@ router.post('/admin-login-verify-otp', [
       return res.status(400).json({ success: false, errors: errors.array() });
     }
 
-    const { phone, otp } = req.body;
+    const { phone, otp, msg91Verified } = req.body;
 
-    logger.info(`Admin login OTP verification attempt for ${phone}, OTP: ${otp}`);
+    logger.info(`Admin login OTP verification attempt for ${phone}, OTP: ${otp}, msg91Verified: ${msg91Verified}`);
+    
+    // Check if MSG91 SDK verified the OTP
+    const isMsg91Verified = msg91Verified === true || msg91Verified === 'true' || msg91Verified === 1;
+    
+    if (!isMsg91Verified) {
+      // Standard OTP verification - verify against stored OTP
+      if (!otp) {
+        return res.status(400).json({
+          success: false,
+          message: 'OTP code is required when msg91Verified is not true.'
+        });
+      }
     
     // Verify against stored OTP
     if (!global.otpStore || !global.otpStore.has(phone)) {
@@ -1392,6 +1634,13 @@ router.post('/admin-login-verify-otp', [
         success: false,
         message: 'Invalid OTP code. Please check and try again.'
       });
+      }
+      
+      // Clear OTP from store after successful verification
+      global.otpStore.delete(phone);
+    } else {
+      // MSG91 SDK verified the OTP - skip backend OTP comparison
+      logger.info(`MSG91 SDK verified OTP for admin login, phone: ${phone} - bypassing backend OTP check`);
     }
 
     // OTP verified - get admin details and generate login token (login is just the phone number)
@@ -1421,9 +1670,7 @@ router.post('/admin-login-verify-otp', [
       { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
     );
 
-    // Clear OTP from store after successful verification
-    global.otpStore.delete(phone);
-    logger.info(`Admin login OTP verified successfully for phone: ${phone}, adminid: ${admin.adminid}`);
+    logger.info(`Admin login OTP verified successfully for phone: ${phone}, adminid: ${admin.adminid}, msg91Verified: ${isMsg91Verified}`);
 
     res.json({
       success: true,
@@ -1448,7 +1695,8 @@ router.post('/admin-login-verify-otp', [
 // Admin signup endpoint (phone-based with OTP verification)
 router.post('/admin-signup', [
   body('phone').matches(/^[6-9]\d{9}$/).withMessage('Valid 10-digit phone number required'),
-  body('adminKey').notEmpty().withMessage('Admin key required')
+  body('adminKey').notEmpty().withMessage('Admin key required'),
+  body('msg91Verified').optional().isBoolean().withMessage('msg91Verified must be a boolean')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -1456,13 +1704,15 @@ router.post('/admin-signup', [
       return res.status(400).json({ success: false, errors: errors.array() });
     }
 
-    const { phone, adminKey } = req.body;
+    const { phone, adminKey, msg91Verified } = req.body;
 
-    logger.info(`Admin signup attempt for phone: ${phone}`);
+    logger.info(`Admin signup attempt for phone: ${phone}, msg91Verified: ${msg91Verified}, type: ${typeof msg91Verified}`);
+    console.log(`[Admin Signup] Request body:`, { phone, adminKey: adminKey ? '***' : 'missing', msg91Verified, msg91VerifiedType: typeof msg91Verified });
 
-    // Verify admin key
+    // Verify admin key FIRST (before any other checks)
     const validAdminKey = process.env.ADMIN_SIGNUP_KEY || 'ADMIN_SECRET_KEY_2024';
     if (adminKey !== validAdminKey) {
+      logger.warn(`Invalid admin key provided for phone: ${phone}`);
       return res.status(403).json({
         success: false,
         message: 'Invalid admin key',
@@ -1491,47 +1741,75 @@ router.post('/admin-signup', [
       });
     }
 
-    // Verify OTP was verified
-    if (!global.otpStore || !global.otpStore.has(phone)) {
-      logger.warn(`OTP store missing for phone: ${phone}`);
-      return res.status(400).json({
-        success: false,
-        message: 'Please verify your phone number first. Please request a new OTP.',
-        error: 'OTP not verified'
+    // Check if msg91Verified flag is provided (from MSG91 SDK verification)
+    const isMsg91Verified = msg91Verified === true || msg91Verified === 'true' || msg91Verified === 1 || msg91Verified === '1';
+    
+    logger.info(`[Admin Signup] isMsg91Verified: ${isMsg91Verified}, msg91Verified: ${msg91Verified}, type: ${typeof msg91Verified}`);
+    console.log(`[Admin Signup] isMsg91Verified check: ${isMsg91Verified}, msg91Verified=${msg91Verified}, type=${typeof msg91Verified}`);
+    
+    if (isMsg91Verified) {
+      // MSG91 SDK verified the OTP - create/update OTP entry in backend store
+      // Admin key and phone were already validated above
+      if (!global.otpStore) {
+        global.otpStore = new Map();
+      }
+      
+      // Store admin key and mark OTP as verified for MSG91 SDK flow
+      global.otpStore.set(phone, {
+        phone: phone,
+        adminKey: adminKey, // Store admin key for validation
+        verified: true,
+        verifiedAt: Date.now(),
+        purpose: 'admin-signup',
+        msg91Verified: true
       });
-    }
+      
+      logger.info(`MSG91 SDK verified OTP for admin signup, phone: ${phone}, admin key validated`);
+    } else {
+      // Standard OTP verification check
+      if (!global.otpStore || !global.otpStore.has(phone)) {
+        logger.warn(`OTP store missing for phone: ${phone}. Store keys: ${global.otpStore ? Array.from(global.otpStore.keys()).join(', ') : 'null'}`);
+        return res.status(400).json({
+          success: false,
+          message: 'Please verify your phone number first. Please request a new OTP.',
+          error: 'OTP not verified'
+        });
+      }
 
-    const otpData = global.otpStore.get(phone);
-    logger.info(`OTP data for admin signup: ${JSON.stringify({ verified: otpData.verified, phone: otpData.phone, purpose: otpData.purpose, hasVerified: otpData.hasOwnProperty('verified') })}`);
-    
-    // Check if OTP was for admin signup
-    if (otpData.purpose !== 'admin-signup') {
-      logger.warn(`OTP purpose mismatch for phone: ${phone}. Expected: admin-signup, Got: ${otpData.purpose}`);
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid OTP. Please request a new admin signup OTP.',
-        error: 'OTP purpose mismatch'
-      });
+      const otpData = global.otpStore.get(phone);
+      logger.info(`OTP data for admin signup: ${JSON.stringify({ verified: otpData.verified, phone: otpData.phone, purpose: otpData.purpose, hasVerified: otpData.hasOwnProperty('verified') })}`);
+      
+      // Check if OTP was for admin signup
+      if (otpData.purpose !== 'admin-signup') {
+        logger.warn(`OTP purpose mismatch for phone: ${phone}. Expected: admin-signup, Got: ${otpData.purpose}`);
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid OTP. Please request a new admin signup OTP.',
+          error: 'OTP purpose mismatch'
+        });
+      }
+      
+      // Verify admin key matches the one used during OTP generation
+      if (otpData.adminKey !== adminKey) {
+        logger.warn(`Admin key mismatch for phone: ${phone}`);
+        return res.status(403).json({
+          success: false,
+          message: 'Invalid admin key',
+          error: 'Admin key mismatch'
+        });
+      }
+      
+      if (!otpData.verified) {
+        logger.warn(`OTP not verified for phone: ${phone}`);
+        return res.status(400).json({
+          success: false,
+          message: 'Please verify your phone number first. Please request a new OTP.',
+          error: 'OTP not verified'
+        });
+      }
     }
     
-    // Verify admin key matches the one used during OTP generation
-    if (otpData.adminKey !== adminKey) {
-      logger.warn(`Admin key mismatch for phone: ${phone}`);
-      return res.status(403).json({
-        success: false,
-        message: 'Invalid admin key',
-        error: 'Admin key mismatch'
-      });
-    }
-    
-    if (!otpData.verified) {
-      logger.warn(`OTP not verified for phone: ${phone}`);
-      return res.status(400).json({
-        success: false,
-        message: 'Please verify your phone number first. Please request a new OTP.',
-        error: 'OTP not verified'
-      });
-    }
+    logger.info(`Admin signup proceeding for phone: ${phone} (OTP verified${isMsg91Verified ? ' via MSG91 SDK' : ' via backend'})`);
 
     // Generate username from phone (use phone directly since login column is varchar(10))
     const username = phone; // Use phone number directly as login (10 digits fits varchar(10))
@@ -1623,11 +1901,60 @@ router.get('/verify', async (req, res) => {
 router.post('/test-login-member', async (req, res) => {
   try {
     // Find test member
-    const members = await query(
+    let members = await query(
       'SELECT memberid, login, phone, active, typeid, email, firstname, lastname FROM member WHERE phone = ? OR login = ?',
       ['9876543210', 'testuser']
     );
 
+    // If test member doesn't exist, try to create it
+    if (members.length === 0) {
+      try {
+        // Get a valid typeid - try def_type first, then existing members
+        let typeid = null;
+        const defTypes = await query('SELECT typeid FROM def_type LIMIT 1');
+        if (defTypes.length > 0) {
+          typeid = defTypes[0].typeid;
+        } else {
+          const existingMembers = await query('SELECT typeid FROM member WHERE typeid IS NOT NULL LIMIT 1');
+          if (existingMembers.length > 0) {
+            typeid = existingMembers[0].typeid;
+          }
+        }
+        
+        // If we have a valid typeid, create the test member
+        if (typeid) {
+          const bcrypt = require('bcryptjs');
+          const password = await bcrypt.hash('test123', 10);
+          
+          await query(
+            `INSERT INTO member (login, passwd, phone, firstname, lastname, email, active, sid, pid, typeid, signuptime, created)
+             VALUES (?, ?, ?, 'Test', 'User', 'testuser@goldelevate.com', 'Yes', 1, 1, ?, NOW(), NOW())`,
+            ['testuser', password, '9876543210', typeid]
+          );
+          
+          // Fetch the newly created member
+          members = await query(
+            'SELECT memberid, login, phone, active, typeid, email, firstname, lastname FROM member WHERE phone = ? OR login = ?',
+            ['9876543210', 'testuser']
+          );
+          
+          logger.info('Test member auto-created: testuser (9876543210)');
+        } else {
+          return res.status(404).json({
+            success: false,
+            message: 'Test member not found and cannot be auto-created. Database appears to be empty. Please run database setup first.'
+          });
+        }
+      } catch (createError) {
+        logger.error('Error auto-creating test member:', createError);
+        return res.status(500).json({
+          success: false,
+          message: 'Test member not found and failed to auto-create.',
+          error: createError.message
+        });
+      }
+    }
+    
     if (members.length === 0) {
       return res.status(404).json({
         success: false,

@@ -9,7 +9,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { default as Icon } from 'react-native-vector-icons/MaterialIcons';
 import { adminAPI } from '../../config/api';
 import Toast from 'react-native-toast-message';
 import { formatCurrency, formatDate } from '../../utils/helpers';
@@ -61,6 +61,13 @@ export default function AdminPaymentsScreen({ navigation }) {
   };
 
   const handleVerify = async (id) => {
+    // Validate payment ID
+    if (!id || id === null || id === undefined) {
+      console.error('[VERIFY PAYMENT] Invalid payment ID:', id);
+      showErrorToast(null, 'Invalid payment ID');
+      return;
+    }
+
     // Prevent multiple simultaneous verifications
     if (verifyingId !== null) {
       console.log('[VERIFY PAYMENT] Already verifying a payment, ignoring click');
@@ -74,27 +81,59 @@ export default function AdminPaymentsScreen({ navigation }) {
     }
 
     console.log('[VERIFY PAYMENT] ===========================================');
-    console.log('[VERIFY PAYMENT] Button clicked for payment ID:', id);
+    console.log('[VERIFY PAYMENT] Button clicked for payment ID:', id, typeof id);
     console.log('[VERIFY PAYMENT] Showing confirmation...');
 
-    // Use window.confirm for web compatibility (React Native Alert doesn't work well on web)
-    const isWeb = typeof window !== 'undefined';
-    let confirmed = false;
+    // Check if window.confirm exists (only in actual web browsers, not React Native)
+    const hasWindowConfirm = typeof window !== 'undefined' && typeof window.confirm === 'function';
 
-    if (isWeb) {
+    if (hasWindowConfirm) {
       // Web: Use native browser confirm
-      confirmed = window.confirm(`Are you sure you want to verify payment ID ${id}?`);
-      console.log('[VERIFY PAYMENT] Web confirm result:', confirmed);
-      
-      if (!confirmed) {
-        console.log('[VERIFY PAYMENT] User cancelled verification');
-        return;
+      try {
+        const confirmed = window.confirm(`Are you sure you want to verify payment ID ${id}?`);
+        console.log('[VERIFY PAYMENT] Web confirm result:', confirmed);
+        
+        if (!confirmed) {
+          console.log('[VERIFY PAYMENT] User cancelled verification');
+          return;
+        }
+        
+        // Perform verification directly for web
+        performVerification(id).catch((error) => {
+          console.error('[VERIFY PAYMENT] Unhandled error in performVerification:', error);
+          showErrorToast(error, 'Failed to verify payment');
+          setVerifyingId(null);
+        });
+      } catch (error) {
+        console.error('[VERIFY PAYMENT] Error with window.confirm, falling back to Alert:', error);
+        // Fall through to use Alert instead
+        Alert.alert(
+          'Verify Payment',
+          `Are you sure you want to verify payment ID ${id}?`,
+          [
+            { 
+              text: 'Cancel', 
+              style: 'cancel',
+              onPress: () => {
+                console.log('[VERIFY PAYMENT] User cancelled verification');
+              }
+            },
+            {
+              text: 'Verify',
+              onPress: () => {
+                console.log('[VERIFY PAYMENT] User confirmed verification');
+                performVerification(id).catch((error) => {
+                  console.error('[VERIFY PAYMENT] Unhandled error in performVerification:', error);
+                  showErrorToast(error, 'Failed to verify payment');
+                  setVerifyingId(null);
+                });
+              },
+            },
+          ]
+        );
       }
-      
-      // Perform verification directly for web
-      performVerification(id);
     } else {
-      // Mobile: Use React Native Alert
+      // Mobile or web without window.confirm: Use React Native Alert
       Alert.alert(
         'Verify Payment',
         `Are you sure you want to verify payment ID ${id}?`,
@@ -109,8 +148,12 @@ export default function AdminPaymentsScreen({ navigation }) {
           {
             text: 'Verify',
             onPress: () => {
-              console.log('[VERIFY PAYMENT] User confirmed verification (mobile)');
-              performVerification(id);
+              console.log('[VERIFY PAYMENT] User confirmed verification');
+              performVerification(id).catch((error) => {
+                console.error('[VERIFY PAYMENT] Unhandled error in performVerification:', error);
+                showErrorToast(error, 'Failed to verify payment');
+                setVerifyingId(null);
+              });
             },
           },
         ]
@@ -177,6 +220,13 @@ export default function AdminPaymentsScreen({ navigation }) {
   };
 
   const handleReject = async (id) => {
+    // Validate payment ID
+    if (!id || id === null || id === undefined) {
+      console.error('[REJECT PAYMENT] Invalid payment ID:', id);
+      showErrorToast(null, 'Invalid payment ID');
+      return;
+    }
+
     // Prevent multiple simultaneous rejections
     if (rejectingId !== null) {
       console.log('[REJECT PAYMENT] Already rejecting a payment, ignoring click');
@@ -190,27 +240,60 @@ export default function AdminPaymentsScreen({ navigation }) {
     }
 
     console.log('[REJECT PAYMENT] ===========================================');
-    console.log('[REJECT PAYMENT] Button clicked for payment ID:', id);
+    console.log('[REJECT PAYMENT] Button clicked for payment ID:', id, typeof id);
     console.log('[REJECT PAYMENT] Showing confirmation...');
 
-    // Use window.confirm for web compatibility
-    const isWeb = typeof window !== 'undefined';
-    let confirmed = false;
+    // Check if window.confirm exists (only in actual web browsers, not React Native)
+    const hasWindowConfirm = typeof window !== 'undefined' && typeof window.confirm === 'function';
 
-    if (isWeb) {
+    if (hasWindowConfirm) {
       // Web: Use native browser confirm
-      confirmed = window.confirm(`Are you sure you want to reject payment ID ${id}?`);
-      console.log('[REJECT PAYMENT] Web confirm result:', confirmed);
-      
-      if (!confirmed) {
-        console.log('[REJECT PAYMENT] User cancelled rejection');
-        return;
+      try {
+        const confirmed = window.confirm(`Are you sure you want to reject payment ID ${id}?`);
+        console.log('[REJECT PAYMENT] Web confirm result:', confirmed);
+        
+        if (!confirmed) {
+          console.log('[REJECT PAYMENT] User cancelled rejection');
+          return;
+        }
+        
+        // Perform rejection directly for web
+        performRejection(id).catch((error) => {
+          console.error('[REJECT PAYMENT] Unhandled error in performRejection:', error);
+          showErrorToast(error, 'Failed to reject payment');
+          setRejectingId(null);
+        });
+      } catch (error) {
+        console.error('[REJECT PAYMENT] Error with window.confirm, falling back to Alert:', error);
+        // Fall through to use Alert instead
+        Alert.alert(
+          'Reject Payment',
+          `Are you sure you want to reject payment ID ${id}?`,
+          [
+            { 
+              text: 'Cancel', 
+              style: 'cancel',
+              onPress: () => {
+                console.log('[REJECT PAYMENT] User cancelled rejection');
+              }
+            },
+            {
+              text: 'Reject',
+              style: 'destructive',
+              onPress: () => {
+                console.log('[REJECT PAYMENT] User confirmed rejection');
+                performRejection(id).catch((error) => {
+                  console.error('[REJECT PAYMENT] Unhandled error in performRejection:', error);
+                  showErrorToast(error, 'Failed to reject payment');
+                  setRejectingId(null);
+                });
+              },
+            },
+          ]
+        );
       }
-      
-      // Perform rejection directly for web
-      performRejection(id);
     } else {
-      // Mobile: Use React Native Alert
+      // Mobile or web without window.confirm: Use React Native Alert
       Alert.alert(
         'Reject Payment',
         `Are you sure you want to reject payment ID ${id}?`,
@@ -226,8 +309,12 @@ export default function AdminPaymentsScreen({ navigation }) {
             text: 'Reject',
             style: 'destructive',
             onPress: () => {
-              console.log('[REJECT PAYMENT] User confirmed rejection (mobile)');
-              performRejection(id);
+              console.log('[REJECT PAYMENT] User confirmed rejection');
+              performRejection(id).catch((error) => {
+                console.error('[REJECT PAYMENT] Unhandled error in performRejection:', error);
+                showErrorToast(error, 'Failed to reject payment');
+                setRejectingId(null);
+              });
             },
           },
         ]
@@ -355,8 +442,10 @@ export default function AdminPaymentsScreen({ navigation }) {
           {filteredPayments.length} payment{filteredPayments.length !== 1 ? 's' : ''}
         </Text>
 
-        {filteredPayments.map((payment) => (
-          <View key={payment.upipaymentid} style={styles.paymentCard}>
+        {filteredPayments.map((payment) => {
+          const paymentId = payment.upipaymentid || payment.id || payment.upipayment_id || `payment-${payment.memberid}-${payment.created}`;
+          return (
+          <View key={paymentId} style={styles.paymentCard}>
             <View style={styles.paymentHeader}>
               <View style={styles.paymentInfo}>
                 <Text style={styles.paymentAmount}>{formatCurrency(payment.amount)}</Text>
@@ -411,12 +500,18 @@ export default function AdminPaymentsScreen({ navigation }) {
                   ]}
                   onPress={() => {
                     if (verifyingId === null && rejectingId === null) {
-                      handleVerify(payment.upipaymentid);
+                      const paymentId = payment.upipaymentid || payment.id || payment.upipayment_id;
+                      if (paymentId) {
+                        handleVerify(paymentId);
+                      } else {
+                        console.error('[VERIFY PAYMENT] Payment ID not found in payment object:', payment);
+                        showErrorToast(null, 'Payment ID not found');
+                      }
                     }
                   }}
                   disabled={verifyingId !== null || rejectingId !== null}
                 >
-                  {verifyingId === payment.upipaymentid ? (
+                  {verifyingId === (payment.upipaymentid || payment.id || payment.upipayment_id) ? (
                     <>
                       <ActivityIndicator size="small" color="#28a745" style={{ marginRight: 8 }} />
                       <Text style={styles.verifyButtonText}>Verifying...</Text>
@@ -435,12 +530,18 @@ export default function AdminPaymentsScreen({ navigation }) {
                   ]}
                   onPress={() => {
                     if (verifyingId === null && rejectingId === null) {
-                      handleReject(payment.upipaymentid);
+                      const paymentId = payment.upipaymentid || payment.id || payment.upipayment_id;
+                      if (paymentId) {
+                        handleReject(paymentId);
+                      } else {
+                        console.error('[REJECT PAYMENT] Payment ID not found in payment object:', payment);
+                        showErrorToast(null, 'Payment ID not found');
+                      }
                     }
                   }}
                   disabled={verifyingId !== null || rejectingId !== null}
                 >
-                  {rejectingId === payment.upipaymentid ? (
+                  {rejectingId === (payment.upipaymentid || payment.id || payment.upipayment_id) ? (
                     <>
                       <ActivityIndicator size="small" color="#dc3545" style={{ marginRight: 8 }} />
                       <Text style={styles.rejectButtonText}>Rejecting...</Text>
@@ -455,7 +556,8 @@ export default function AdminPaymentsScreen({ navigation }) {
               </View>
             )}
           </View>
-        ))}
+          );
+        })}
 
         {filteredPayments.length === 0 && (
           <View style={styles.emptyState}>
@@ -485,6 +587,7 @@ const styles = StyleSheet.create({
   },
   backButton: {
     padding: 8,
+    zIndex:10,
   },
   headerTitle: {
     fontSize: 20,
@@ -569,6 +672,9 @@ const styles = StyleSheet.create({
   statusPending: {
     backgroundColor: 'rgba(255, 152, 0, 0.2)',
   },
+  statusRejected: {
+    backgroundColor: 'rgba(220, 53, 69, 0.2)',
+  },
   statusText: {
     fontSize: 12,
     fontWeight: '700',
@@ -578,6 +684,9 @@ const styles = StyleSheet.create({
   },
   statusTextPending: {
     color: '#FF9800',
+  },
+  statusTextRejected: {
+    color: '#dc3545',
   },
   paymentDetails: {
     borderTopWidth: 1,
