@@ -173,7 +173,12 @@ function AuthNavigator() {
   
   return (
     <Stack.Navigator 
-      screenOptions={{ headerShown: false }}
+      screenOptions={{ 
+        headerShown: false,
+        contentStyle: { backgroundColor: '#1a1a1a' },
+        animationEnabled: true,
+        cardStyle: { backgroundColor: '#1a1a1a' },
+      }}
       initialRouteName="Splash"
     >
       {!isAuthenticated ? (
@@ -234,6 +239,17 @@ export default function App() {
       <ErrorBoundary>
         <AuthProvider>
           <NavigationContainer
+            theme={{
+              dark: true,
+              colors: {
+                primary: '#FFD700',
+                background: '#1a1a1a',
+                card: '#1a1a1a',
+                text: '#ffffff',
+                border: '#2a2a2a',
+                notification: '#FFD700',
+              },
+            }}
             onReady={() => {
               console.log('✅ NavigationContainer ready');
             }}
@@ -244,7 +260,7 @@ export default function App() {
               console.error('❌ Navigation error:', error);
             }}
           >
-            <StatusBar barStyle="light-content" backgroundColor="#D4AF37" />
+            <StatusBar barStyle="light-content" backgroundColor="#1a1a1a" />
             <AuthNavigator />
             <Toast />
           </NavigationContainer>

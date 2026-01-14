@@ -6,9 +6,9 @@ import {
   ScrollView,
   TouchableOpacity,
   Dimensions,
+  Image,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { LinearGradient } from 'react-native-linear-gradient';
 import { default as Icon } from 'react-native-vector-icons/MaterialIcons';
 import * as Animatable from 'react-native-animatable';
 
@@ -31,13 +31,14 @@ export default function HomeScreen() {
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
       {/* Hero Section */}
-      <LinearGradient
-        colors={['#D4AF37', '#B8941F']}
-        style={styles.hero}
-      >
+      <View style={styles.hero}>
         <Animatable.View animation="fadeInDown" duration={1000}>
-          <Text style={styles.heroIcon}>🏦</Text>
-          <Text style={styles.heroTitle}>GoldElevate</Text>
+          <Image 
+            source={require('../../assets/goldpile.png')} 
+            style={styles.heroIcon}
+            resizeMode="contain"
+          />
+          <Text style={styles.heroTitleGold}>GoldElevate</Text>
           <Text style={styles.heroSubtitle}>
             Secure your financial future with trusted gold-backed investments
           </Text>
@@ -65,7 +66,7 @@ export default function HomeScreen() {
             style={styles.ctaPrimary}
             onPress={() => navigation.navigate('Signup')}
           >
-            <Text style={styles.ctaPrimaryText}>Start Investing</Text>
+            <Text style={styles.ctaPrimaryText}>Get Started</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.ctaSecondary}
@@ -81,13 +82,13 @@ export default function HomeScreen() {
           <Icon name="admin-panel-settings" size={20} color="#fff" />
           <Text style={styles.adminLoginText}>Admin Login</Text>
         </TouchableOpacity>
-        <TouchableOpacity
+        {/* <TouchableOpacity
           style={[styles.adminLoginButton, { backgroundColor: 'rgba(102, 102, 102, 0.8)', marginTop: 8 }]}
           onPress={() => navigation.navigate('TestLogin')}
         >
           <Text style={styles.adminLoginText}>🧪 Test Login Helper</Text>
-        </TouchableOpacity>
-      </LinearGradient>
+        </TouchableOpacity> */}
+      </View>
 
       {/* Why Invest Section */}
       <View style={styles.section}>
@@ -142,7 +143,7 @@ export default function HomeScreen() {
                 ]}>
                   <Text style={styles.packageBadgeText}>{pkg.name}</Text>
                 </View>
-                <Icon name="arrow-forward" size={24} color={pkg.premium ? '#ff6b6b' : '#D4AF37'} />
+                <Icon name="arrow-forward" size={24} color="#FFD700" />
               </View>
               <View style={styles.packagePrice}>
                 <Text style={styles.priceLabel}>Investment Amount</Text>
@@ -161,10 +162,7 @@ export default function HomeScreen() {
       </View>
 
       {/* Final CTA */}
-      <LinearGradient
-        colors={['#D4AF37', '#B8941F']}
-        style={styles.finalCTA}
-      >
+      <View style={styles.finalCTA}>
         <Text style={styles.finalCTATitle}>Ready to Start Your Investment Journey?</Text>
         <Text style={styles.finalCTASubtitle}>
           Join thousands of investors earning daily returns
@@ -175,7 +173,7 @@ export default function HomeScreen() {
         >
           <Text style={styles.finalCTAButtonText}>Get Started Now</Text>
         </TouchableOpacity>
-      </LinearGradient>
+      </View>
     </ScrollView>
   );
 }
@@ -183,33 +181,45 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#1a1a1a',
   },
   hero: {
     padding: 24,
     paddingTop: 50,
-    borderBottomLeftRadius: 30,
-    borderBottomRightRadius: 30,
+    paddingBottom: 40,
+    backgroundColor: '#1a1a1a',
     alignItems: 'center',
   },
   heroIcon: {
-    fontSize: 64,
-    marginBottom: 16,
+    width: 150,
+    height: 150,
+    marginBottom: 1,
   },
   heroTitle: {
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: '700',
-    color: '#fff',
-    marginBottom: 8,
+    color: '#ffffff',
+    marginBottom: 12,
     textAlign: 'center',
+    fontFamily: 'System',
+  },
+  heroTitleGold: {
+    fontSize: 32,
+    fontWeight: '700',
+    color: '#FFD700',
+    marginBottom: 12,
+    textAlign: 'center',
+    fontFamily: 'System',
   },
   heroSubtitle: {
-    fontSize: 14,
-    color: '#fff',
-    opacity: 0.9,
+    fontSize: 16,
+    color: '#ffffff',
+    opacity: 0.85,
     textAlign: 'center',
-    marginBottom: 24,
+    marginBottom: 32,
     paddingHorizontal: 20,
+    lineHeight: 24,
+    fontFamily: 'System',
   },
   trustBadges: {
     flexDirection: 'row',
@@ -218,21 +228,23 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   badge: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255, 215, 0, 0.15)',
     padding: 12,
     borderRadius: 12,
     minWidth: 80,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 215, 0, 0.3)',
   },
   badgeNumber: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#fff',
+    color: '#FFD700',
   },
   badgeLabel: {
     fontSize: 12,
-    color: '#fff',
-    opacity: 0.9,
+    color: '#ffffff',
+    opacity: 0.8,
     marginTop: 4,
   },
   ctaButtons: {
@@ -242,33 +254,42 @@ const styles = StyleSheet.create({
   },
   ctaPrimary: {
     flex: 1,
-    backgroundColor: '#fff',
-    padding: 14,
+    backgroundColor: '#FFD700',
+    padding: 16,
     borderRadius: 12,
     alignItems: 'center',
+    shadowColor: '#FFD700',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
   },
   ctaPrimaryText: {
-    color: '#D4AF37',
+    color: '#1a1a1a',
     fontWeight: '700',
     fontSize: 16,
+    fontFamily: 'System',
   },
   ctaSecondary: {
     flex: 1,
     backgroundColor: 'transparent',
     borderWidth: 2,
-    borderColor: '#fff',
-    padding: 14,
+    borderColor: '#FFD700',
+    padding: 16,
     borderRadius: 12,
     alignItems: 'center',
   },
   ctaSecondaryText: {
-    color: '#fff',
+    color: '#FFD700',
     fontWeight: '700',
     fontSize: 16,
+    fontFamily: 'System',
   },
   adminLoginButton: {
     marginTop: 12,
-    backgroundColor: 'rgba(139, 69, 19, 0.8)',
+    backgroundColor: 'rgba(255, 215, 0, 0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 215, 0, 0.4)',
     padding: 12,
     borderRadius: 12,
     flexDirection: 'row',
@@ -277,23 +298,28 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   adminLoginText: {
-    color: '#fff',
+    color: '#FFD700',
     fontWeight: '700',
     fontSize: 14,
+    fontFamily: 'System',
   },
   section: {
     padding: 20,
+    backgroundColor: '#1a1a1a',
   },
   sectionTitle: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#333',
+    color: '#ffffff',
     marginBottom: 8,
+    fontFamily: 'System',
   },
   sectionSubtitle: {
     fontSize: 14,
-    color: '#666',
+    color: '#ffffff',
+    opacity: 0.7,
     marginBottom: 20,
+    fontFamily: 'System',
   },
   reasonsGrid: {
     flexDirection: 'row',
@@ -302,14 +328,16 @@ const styles = StyleSheet.create({
   },
   reasonCard: {
     width: (width - 60) / 2,
-    backgroundColor: '#fff',
+    backgroundColor: '#2a2a2a',
     padding: 16,
     borderRadius: 12,
     alignItems: 'center',
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 215, 0, 0.2)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.3,
     shadowRadius: 4,
     elevation: 3,
   },
@@ -320,31 +348,34 @@ const styles = StyleSheet.create({
   reasonTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#333',
+    color: '#ffffff',
     marginBottom: 4,
     textAlign: 'center',
+    fontFamily: 'System',
   },
   reasonDesc: {
     fontSize: 12,
-    color: '#666',
+    color: '#ffffff',
+    opacity: 0.7,
     textAlign: 'center',
+    fontFamily: 'System',
   },
   packageCard: {
-    backgroundColor: '#fff',
+    backgroundColor: '#2a2a2a',
     borderWidth: 2,
-    borderColor: '#D4AF37',
+    borderColor: '#FFD700',
     borderRadius: 16,
     padding: 20,
     marginBottom: 12,
-    shadowColor: '#000',
+    shadowColor: '#FFD700',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 3,
   },
   premiumPackageCard: {
-    borderColor: '#ff6b6b',
-    backgroundColor: 'rgba(255,107,107,0.05)',
+    borderColor: '#FFD700',
+    backgroundColor: 'rgba(255, 215, 0, 0.1)',
   },
   packageHeader: {
     flexDirection: 'row',
@@ -353,73 +384,90 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   packageBadge: {
-    backgroundColor: '#D4AF37',
+    backgroundColor: '#FFD700',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
   },
   premiumBadge: {
-    backgroundColor: '#ff6b6b',
+    backgroundColor: '#FFD700',
   },
   packageBadgeText: {
-    color: '#fff',
+    color: '#1a1a1a',
     fontWeight: '700',
     fontSize: 14,
+    fontFamily: 'System',
   },
   packagePrice: {
     marginBottom: 16,
   },
   priceLabel: {
     fontSize: 12,
-    color: '#666',
+    color: '#ffffff',
+    opacity: 0.7,
     marginBottom: 4,
+    fontFamily: 'System',
   },
   priceValue: {
     fontSize: 32,
     fontWeight: '700',
-    color: '#D4AF37',
+    color: '#FFD700',
+    fontFamily: 'System',
   },
   premiumPriceValue: {
-    color: '#ff6b6b',
+    color: '#FFD700',
   },
   packageDetails: {
     marginTop: 8,
   },
   detailItem: {
     fontSize: 14,
-    color: '#333',
+    color: '#ffffff',
+    opacity: 0.9,
     marginBottom: 8,
+    fontFamily: 'System',
   },
   finalCTA: {
     margin: 20,
     padding: 32,
     borderRadius: 20,
     alignItems: 'center',
+    backgroundColor: '#2a2a2a',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 215, 0, 0.3)',
   },
   finalCTATitle: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#fff',
+    color: '#ffffff',
     marginBottom: 8,
     textAlign: 'center',
+    fontFamily: 'System',
   },
   finalCTASubtitle: {
     fontSize: 14,
-    color: '#fff',
-    opacity: 0.9,
+    color: '#ffffff',
+    opacity: 0.8,
     marginBottom: 24,
     textAlign: 'center',
+    fontFamily: 'System',
   },
   finalCTAButton: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFD700',
     paddingHorizontal: 32,
     paddingVertical: 14,
     borderRadius: 12,
+    shadowColor: '#FFD700',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
   },
   finalCTAButtonText: {
-    color: '#D4AF37',
+    color: '#1a1a1a',
     fontWeight: '700',
     fontSize: 16,
+    fontFamily: 'System',
   },
 });
 

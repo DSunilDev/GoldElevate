@@ -224,6 +224,8 @@ CREATE TABLE IF NOT EXISTS `member` (
   `comm` enum('Credit','Check','Wire','Debit','Cache','Advanced','Other') DEFAULT 'Other',
   `firstname` VARCHAR(255) DEFAULT NULL,
   `lastname` VARCHAR(255) DEFAULT NULL,
+  `fathers_name` VARCHAR(255) DEFAULT NULL,
+  `address` TEXT DEFAULT NULL,
   `street` VARCHAR(255) DEFAULT NULL,
   `city` VARCHAR(255) DEFAULT NULL,
   `state` VARCHAR(255) DEFAULT NULL,
@@ -764,6 +766,40 @@ SELECT
   NOW() as created
 WHERE NOT EXISTS (SELECT 1 FROM `member` WHERE `login` = 'testuser');
 
+-- Add fathers_name and address columns (idempotent - only adds if they don't exist)
+SET @dbname = DATABASE();
+SET @tablename = 'member';
+SET @columnname = 'fathers_name';
+SET @preparedStatement = (SELECT IF(
+  (
+    SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE
+      (TABLE_SCHEMA = @dbname)
+      AND (TABLE_NAME = @tablename)
+      AND (COLUMN_NAME = @columnname)
+  ) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(255) DEFAULT NULL AFTER lastname')
+));
+PREPARE alterIfNeeded FROM @preparedStatement;
+EXECUTE alterIfNeeded;
+DEALLOCATE PREPARE alterIfNeeded;
+
+SET @columnname = 'address';
+SET @preparedStatement = (SELECT IF(
+  (
+    SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE
+      (TABLE_SCHEMA = @dbname)
+      AND (TABLE_NAME = @tablename)
+      AND (COLUMN_NAME = @columnname)
+  ) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' TEXT DEFAULT NULL AFTER fathers_name')
+));
+PREPARE alterIfNeeded FROM @preparedStatement;
+EXECUTE alterIfNeeded;
+DEALLOCATE PREPARE alterIfNeeded;
 -- ============================================
 -- END OF INIT SCRIPT
 -- ============================================

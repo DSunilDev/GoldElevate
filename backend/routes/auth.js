@@ -730,10 +730,61 @@ router.post('/signup', [
       return res.status(400).json({ success: false, errors: errors.array() });
     }
 
-    const { phone, packageid, sponsorid, firstname, lastname, password: userPassword, id_proof, photo, msg91Verified } = req.body;
+    const { phone, packageid, sponsorid, firstname, lastname, fathers_name, email, address, password: userPassword, id_proof, photo, msg91Verified } = req.body;
 
     logger.info(`Signup attempt for phone: ${phone}, method: ${userPassword ? 'password' : 'otp'}, msg91Verified: ${msg91Verified}`);
     logger.info(`Signup request body: ${JSON.stringify({ phone, msg91Verified, hasPassword: !!userPassword })}`);
+
+    // Validate required fields
+    if (!firstname || !firstname.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'First name is required',
+        error: 'First name is required'
+      });
+    }
+
+    if (!lastname || !lastname.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Last name is required',
+        error: 'Last name is required'
+      });
+    }
+
+    if (!fathers_name || !fathers_name.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Father's name is required",
+        error: "Father's name is required"
+      });
+    }
+
+    if (!email || !email.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required',
+        error: 'Email is required'
+      });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid email format',
+        error: 'Invalid email format'
+      });
+    }
+
+    if (!address || !address.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Address is required',
+        error: 'Address is required'
+      });
+    }
 
     // Check if phone already exists FIRST (before OTP check)
     const existing = await query(
@@ -843,9 +894,9 @@ router.post('/signup', [
     // Insert into member table WITHOUT typeid - typeid will be set when user purchases their first investment package
     // TODO: Store id_proof and photo in a separate table or file storage if needed
     const result = await query(
-      `INSERT INTO member (memberid, login, passwd, signup_type, phone, firstname, lastname, sid, typeid, active, signuptime, created)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'No', NOW(), NOW())`,
-      [nextMemberId, username, finalPassword, signupType, phone, firstname || null, lastname || null, finalSponsor]
+      `INSERT INTO member (memberid, login, passwd, signup_type, phone, firstname, lastname, fathers_name, email, address, sid, typeid, active, signuptime, created)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'No', NOW(), NOW())`,
+      [nextMemberId, username, finalPassword, signupType, phone, firstname.trim(), lastname.trim(), fathers_name.trim(), email.trim(), address.trim(), finalSponsor]
     );
     
     // Log id_proof and photo if provided (for future implementation)
@@ -884,9 +935,9 @@ router.post('/signup', [
         memberid: memberId,
         login: username,
         phone,
-        firstname: firstname || null,
-        lastname: lastname || null,
-        email: null,
+        firstname: firstname.trim(),
+        lastname: lastname.trim(),
+        email: email.trim(),
         typeid: null, // typeid will be set when user purchases their first investment package
         role: 'member'
       },

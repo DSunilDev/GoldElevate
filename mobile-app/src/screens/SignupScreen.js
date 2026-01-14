@@ -30,6 +30,9 @@ export default function SignupScreen() {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [fathersName, setFathersName] = useState('');
+  const [email, setEmail] = useState('');
+  const [address, setAddress] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [idProof, setIdProof] = useState(null);
@@ -244,6 +247,42 @@ export default function SignupScreen() {
         type: 'error',
         text1: 'Invalid Phone Number',
         text2: 'Please enter a valid 10-digit phone number',
+      });
+      return false;
+    }
+
+    if (!fathersName.trim()) {
+      Toast.show({
+        type: 'error',
+        text1: 'Validation Error',
+        text2: "Father's name is required",
+      });
+      return false;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!email.trim()) {
+      Toast.show({
+        type: 'error',
+        text1: 'Validation Error',
+        text2: 'Email is required',
+      });
+      return false;
+    }
+    if (!emailRegex.test(email.trim())) {
+      Toast.show({
+        type: 'error',
+        text1: 'Invalid Email',
+        text2: 'Please enter a valid email address',
+      });
+      return false;
+    }
+
+    if (!address.trim()) {
+      Toast.show({
+        type: 'error',
+        text1: 'Validation Error',
+        text2: 'Address is required',
       });
       return false;
     }
@@ -468,6 +507,9 @@ export default function SignupScreen() {
         phone: phoneNumber,
         firstname: firstName.trim(),
         lastname: lastName.trim(),
+        fathers_name: fathersName.trim(),
+        email: email.trim(),
+        address: address.trim(),
         id_proof: idProof?.base64 || null,
         photo: userPhoto?.base64 || null,
       };
@@ -578,6 +620,46 @@ export default function SignupScreen() {
               onChangeText={(text) => setPhoneNumber(text.replace(/[^0-9]/g, ''))}
               keyboardType="phone-pad"
               maxLength={10}
+            />
+          </View>
+
+          {/* Father's Name */}
+          <View style={styles.inputGroup}>
+            <Icon name="person" size={20} color="#666" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="Father's Name"
+              value={fathersName}
+              onChangeText={setFathersName}
+              autoCapitalize="words"
+            />
+          </View>
+
+          {/* Email */}
+          <View style={styles.inputGroup}>
+            <Icon name="email" size={20} color="#666" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="Email"
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+
+          {/* Address */}
+          <View style={styles.inputGroup}>
+            <Icon name="home" size={20} color="#666" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="Address"
+              value={address}
+              onChangeText={setAddress}
+              multiline
+              numberOfLines={3}
+              textAlignVertical="top"
             />
           </View>
 
