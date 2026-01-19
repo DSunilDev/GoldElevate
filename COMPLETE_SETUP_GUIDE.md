@@ -16,8 +16,9 @@ This is the **ONLY** guide you need to set up and run the GoldElevate applicatio
 6. [MSG91 OTP Configuration](#msg91-otp-configuration)
 7. [Network Configuration for Phone Testing](#network-configuration-for-phone-testing)
 8. [Running the Application](#running-the-application)
-9. [Testing the Application](#testing-the-application)
-10. [Troubleshooting](#troubleshooting)
+9. [Building APK for Deployment](#building-apk-for-deployment)
+10. [Testing the Application](#testing-the-application)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -616,9 +617,239 @@ npm start
 
 ---
 
-## 9. Testing the Application
+## 9. Building APK for Deployment
 
-### 9.1 Test Backend API
+### 9.1 Prerequisites for Building APK
+
+Before building an APK, ensure you have:
+- Android Studio installed
+- Android SDK (API level 33+)
+- Java Development Kit (JDK) 17 or higher
+- `android` folder in `mobile-app` directory (if missing, run `npx expo prebuild`)
+
+### 9.2 Update Production Backend URL
+
+**IMPORTANT**: Before building for production, update the backend URL in `mobile-app/app.config.js`:
+
+```javascript
+extra: {
+  apiUrl: "https://your-production-api.com/api", // Update this!
+}
+```
+
+Replace `https://your-production-api.com/api` with your actual production backend URL.
+
+### 9.3 Option 1: EAS Build (Cloud Build - Recommended)
+
+EAS Build is the easiest method - it builds your APK in the cloud without needing Android Studio.
+
+**Steps:**
+
+1. **Install EAS CLI:**
+   ```bash
+   npm install -g eas-cli
+   ```
+
+2. **Login to Expo:**
+   ```bash
+   cd mobile-app
+   eas login
+   ```
+   (Create a free account at https://expo.dev if needed)
+
+3. **Initialize project (if first time):**
+   ```bash
+   eas init
+   ```
+   This will create/update your project ID in `app.config.js`
+
+4. **Build APK:**
+   ```bash
+   eas build --platform android --profile preview
+   ```
+
+5. **Wait for build** (10-20 minutes):
+   - You'll get a download link in the terminal
+   - Or check: https://expo.dev/accounts/[your-account]/projects/gold-elevate/builds
+
+6. **Download and install:**
+   - Download the APK to your Android phone
+   - Enable "Install from unknown sources" in Settings
+   - Install and test!
+
+**Pros:**
+- ✅ No Android Studio needed
+- ✅ Works on any computer
+- ✅ Automatic signing
+- ✅ Free tier: 30 builds/month
+
+**Cons:**
+- ❌ Requires Expo account
+- ❌ Build takes 10-20 minutes
+- ❌ Requires internet connection
+
+**Quick Build Script:**
+```bash
+cd mobile-app
+./build-apk.sh
+```
+
+### 9.4 Option 2: Local Build with Gradle (Fastest if Android Studio is set up)
+
+This method builds the APK locally using Gradle.
+
+**Steps:**
+
+1. **Navigate to mobile-app directory:**
+   ```bash
+   cd mobile-app
+   ```
+
+2. **Build APK using script:**
+   ```bash
+   ./build-apk-local.sh
+   ```
+
+   **OR build manually:**
+   ```bash
+   cd android
+   ./gradlew assembleRelease
+   ```
+
+3. **Find your APK:**
+   ```
+   android/app/build/outputs/apk/release/app-release.apk
+   ```
+
+4. **Install on phone:**
+   - Transfer APK to phone (USB, email, cloud storage)
+   - Enable "Install from unknown sources" in Settings
+   - Open APK file and install
+
+**Prerequisites:**
+- Android Studio installed
+- Android SDK configured
+- `ANDROID_HOME` environment variable set:
+   ```bash
+   # macOS/Linux
+   export ANDROID_HOME=$HOME/Library/Android/sdk
+   export PATH=$PATH:$ANDROID_HOME/platform-tools
+   ```
+
+**Pros:**
+- ✅ Fast builds (2-5 minutes)
+- ✅ No internet needed after setup
+- ✅ Full control over build process
+- ✅ No account required
+
+**Cons:**
+- ❌ Requires Android Studio (~1GB download)
+- ❌ More setup required
+
+**Quick Build Script:**
+```bash
+cd mobile-app
+./build-apk-simple.sh
+```
+
+### 9.5 Option 3: Using Expo CLI Directly
+
+```bash
+cd mobile-app
+npx expo run:android --variant release
+```
+
+APK will be at: `android/app/build/outputs/apk/release/app-release.apk`
+
+### 9.6 Cleaning Build Cache
+
+If you encounter build errors related to cached files, clean the build cache:
+
+```bash
+cd mobile-app/android
+./gradlew clean
+```
+
+Then rebuild:
+```bash
+./gradlew assembleRelease
+```
+
+### 9.7 Installing APK on Android Phone
+
+After building, install on your Android device:
+
+1. **Transfer APK to phone:**
+   - Email it to yourself
+   - Use Google Drive/Dropbox
+   - Use USB cable
+   - Or use: `adb install app-release.apk` (if USB debugging enabled)
+
+2. **Enable "Install from Unknown Sources":**
+   - Settings → Security → Install Unknown Apps
+   - Or Settings → Apps → Special Access → Install Unknown Apps
+   - Enable for the app you're using to install (File Manager, Chrome, etc.)
+
+3. **Install:**
+   - Open APK file on phone
+   - Tap "Install"
+   - Done! 🎉
+
+### 9.8 Troubleshooting APK Build
+
+**Error: "PNG file corrupted" or "failed to read PNG signature"**
+- Solution: Ensure all image files in `mobile-app/assets` are valid PNG files
+- If a file is actually WebP, convert it:
+  ```bash
+  cd mobile-app/assets
+  sips -s format png filename.webp --out filename.png
+  ```
+- Clean build cache: `cd mobile-app/android && ./gradlew clean`
+
+**Error: "Build failed with exception"**
+- Clean the build: `cd mobile-app/android && ./gradlew clean`
+- Check Android SDK is installed
+- Verify Java/JDK version (should be 17+)
+- Check `ANDROID_HOME` is set correctly
+
+**Error: "Command not found: gradlew"**
+- Make sure you're in the `mobile-app/android` directory
+- Run: `chmod +x gradlew` (if on macOS/Linux)
+
+**APK too large:**
+- This is normal for React Native apps (usually 30-50MB)
+- For production, consider using App Bundle (AAB) instead of APK
+- Use ProGuard/R8 for code shrinking (configured in `android/app/build.gradle`)
+
+### 9.9 Building for Production (App Store/Play Store)
+
+For Play Store submission, build an Android App Bundle (AAB) instead:
+
+**Using EAS Build:**
+```bash
+cd mobile-app
+eas build --platform android --profile production
+```
+
+**Using Gradle:**
+```bash
+cd mobile-app/android
+./gradlew bundleRelease
+```
+
+AAB will be at: `android/app/build/outputs/bundle/release/app-release.aab`
+
+**Note:** For production builds:
+- Update `versionCode` in `android/app/build.gradle`
+- Update version in `app.config.js`
+- Sign the bundle with your production keystore
+- Test thoroughly before submission
+
+---
+
+## 10. Testing the Application
+
+### 10.1 Test Backend API
 
 ```bash
 # Health check
@@ -627,7 +858,7 @@ curl http://localhost:8081/api/health
 # Should return: {"success":true,"message":"Server is running"}
 ```
 
-### 9.2 Test User Signup
+### 10.2 Test User Signup
 
 1. Open the app on your phone/browser
 2. Click "Sign Up"
@@ -636,17 +867,18 @@ curl http://localhost:8081/api/health
    - Last Name
    - Email
    - Phone Number (10 digits, starting with 6-9)
-   - Password
-   - Confirm Password
-   - Upload ID Proof (photo)
-   - Upload User Photo
+   - Password (if using password signup)
+   - Confirm Password (if using password signup)
+   - Upload ID Proof Front (required)
+   - Upload ID Proof Back (required)
+   - Upload User Photo (required)
    - Accept Terms & Conditions
 4. Enter referral code (optional)
-5. Click "Send OTP"
-6. Enter OTP received via SMS (or check backend console for OTP)
+5. Click "Send OTP & Continue" (for OTP signup) or "Create Account" (for password signup)
+6. If using OTP: Enter OTP received via SMS (or check backend console for OTP)
 7. Complete signup
 
-### 9.3 Test User Login
+### 10.3 Test User Login
 
 1. Click "Login"
 2. Enter phone number
@@ -654,7 +886,7 @@ curl http://localhost:8081/api/health
 4. Enter OTP received via SMS
 5. Should login successfully
 
-### 9.4 Test Admin Signup
+### 10.4 Test Admin Signup
 
 1. Click "Admin Signup"
 2. Enter phone number
@@ -663,7 +895,7 @@ curl http://localhost:8081/api/health
 5. Enter OTP
 6. Complete admin signup
 
-### 9.5 Test Admin Login
+### 10.5 Test Admin Login
 
 1. Click "Login as Admin" or navigate to Admin Login
 2. Enter admin phone number
@@ -671,7 +903,7 @@ curl http://localhost:8081/api/health
 4. Enter OTP
 5. Should login to admin dashboard
 
-### 9.6 Test Payment Flow
+### 10.6 Test Payment Flow
 
 1. Login as a user
 2. Navigate to "Investments" or "Packages"
@@ -682,7 +914,7 @@ curl http://localhost:8081/api/health
 7. Submit payment
 8. Payment should appear in admin panel for verification
 
-### 9.7 Test Admin Functions
+### 10.7 Test Admin Functions
 
 1. Login as admin
 2. Navigate to "Pending Applications"
@@ -694,9 +926,9 @@ curl http://localhost:8081/api/health
 
 ---
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
-### 10.1 Database Connection Errors
+### 11.1 Database Connection Errors
 
 **Error**: `Database connection failed`
 
@@ -724,7 +956,7 @@ curl http://localhost:8081/api/health
    mysql -u root -p -e "SHOW DATABASES;"
    ```
 
-### 10.2 Backend Won't Start
+### 11.2 Backend Won't Start
 
 **Error**: `Port 8081 already in use`
 
@@ -744,7 +976,7 @@ curl http://localhost:8081/api/health
    PORT=8082
    ```
 
-### 10.3 Mobile App Can't Connect to Backend
+### 11.3 Mobile App Can't Connect to Backend
 
 **Error**: `Network request failed` or `Connection refused`
 
@@ -766,7 +998,7 @@ curl http://localhost:8081/api/health
 
 6. Try restarting backend server
 
-### 10.4 OTP Not Received
+### 11.4 OTP Not Received
 
 **Solutions**:
 1. **Check MSG91 Configuration**:
@@ -790,7 +1022,7 @@ curl http://localhost:8081/api/health
    - Must start with 6, 7, 8, or 9
    - No country code
 
-### 10.5 Mobile App Build Errors
+### 11.5 Mobile App Build Errors
 
 **Error**: `Metro bundler failed` or `Module not found`
 
@@ -816,7 +1048,7 @@ curl http://localhost:8081/api/health
    node --version  # Should be 18+
    ```
 
-### 10.6 Expo Go Connection Issues
+### 11.6 Expo Go Connection Issues
 
 **Error**: `Unable to connect to Expo`
 
@@ -839,7 +1071,7 @@ curl http://localhost:8081/api/health
    npx expo start --clear
    ```
 
-### 10.7 Database Migration Errors
+### 11.7 Database Migration Errors
 
 **Error**: `Table already exists` or `Column already exists`
 
@@ -858,7 +1090,7 @@ curl http://localhost:8081/api/health
    # Then run schema scripts again
    ```
 
-### 10.8 CORS Errors (Web Browser)
+### 11.8 CORS Errors (Web Browser)
 
 **Error**: `CORS policy blocked`
 
@@ -867,7 +1099,7 @@ curl http://localhost:8081/api/health
 2. If still getting errors, check `backend/server.js` CORS configuration
 3. Ensure `FRONTEND_URL` in `.env` matches your frontend URL
 
-### 10.9 JWT Token Errors
+### 11.9 JWT Token Errors
 
 **Error**: `Invalid token` or `Token expired`
 
@@ -880,7 +1112,7 @@ curl http://localhost:8081/api/health
 
 3. Verify token expiration: `JWT_EXPIRES_IN=24h`
 
-### 10.10 Payment Verification Errors
+### 11.10 Payment Verification Errors
 
 **Error**: `Payment verification failed`
 
