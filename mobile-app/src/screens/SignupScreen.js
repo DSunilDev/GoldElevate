@@ -35,7 +35,8 @@ export default function SignupScreen() {
   const [address, setAddress] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [idProof, setIdProof] = useState(null);
+  const [idProofFront, setIdProofFront] = useState(null);
+  const [idProofBack, setIdProofBack] = useState(null);
   const [userPhoto, setUserPhoto] = useState(null);
   const [termsAccepted, setTermsAccepted] = useState(false);
   
@@ -139,8 +140,8 @@ export default function SignupScreen() {
     return true;
   };
 
-  // Pick ID proof image
-  const handlePickIdProof = async () => {
+  // Pick ID proof front image
+  const handlePickIdProofFront = async () => {
     const hasPermission = await requestImagePermissions();
     if (!hasPermission) return;
 
@@ -148,7 +149,7 @@ export default function SignupScreen() {
       launchImageLibrary(
         {
           mediaType: 'photo',
-        quality: 0.8,
+          quality: 0.8,
           includeBase64: true,
         },
         (response) => {
@@ -158,17 +159,58 @@ export default function SignupScreen() {
           if (response.assets && response.assets[0]) {
             const asset = response.assets[0];
             const base64 = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : null;
-        setIdProof({
+            setIdProofFront({
               uri: asset.uri,
-          base64: base64,
-          type: 'id_proof',
-        });
-        Toast.show({
-          type: 'success',
-          text1: 'Success',
-          text2: 'ID proof image selected',
-        });
-      }
+              base64: base64,
+              type: 'id_proof_front',
+            });
+            Toast.show({
+              type: 'success',
+              text1: 'Success',
+              text2: 'ID proof front image selected',
+            });
+          }
+        }
+      );
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to pick image',
+      });
+    }
+  };
+
+  // Pick ID proof back image
+  const handlePickIdProofBack = async () => {
+    const hasPermission = await requestImagePermissions();
+    if (!hasPermission) return;
+
+    try {
+      launchImageLibrary(
+        {
+          mediaType: 'photo',
+          quality: 0.8,
+          includeBase64: true,
+        },
+        (response) => {
+          if (response.didCancel || response.errorCode) {
+            return;
+          }
+          if (response.assets && response.assets[0]) {
+            const asset = response.assets[0];
+            const base64 = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : null;
+            setIdProofBack({
+              uri: asset.uri,
+              base64: base64,
+              type: 'id_proof_back',
+            });
+            Toast.show({
+              type: 'success',
+              text1: 'Success',
+              text2: 'ID proof back image selected',
+            });
+          }
         }
       );
     } catch (error) {
@@ -307,11 +349,20 @@ export default function SignupScreen() {
       }
     }
 
-    if (!idProof) {
+    if (!idProofFront) {
       Toast.show({
         type: 'error',
         text1: 'Validation Error',
-        text2: 'Please upload your ID proof',
+        text2: 'Please upload your ID proof front',
+      });
+      return false;
+    }
+
+    if (!idProofBack) {
+      Toast.show({
+        type: 'error',
+        text1: 'Validation Error',
+        text2: 'Please upload your ID proof back',
       });
       return false;
     }
@@ -510,7 +561,8 @@ export default function SignupScreen() {
         fathers_name: fathersName.trim(),
         email: email.trim(),
         address: address.trim(),
-        id_proof: idProof?.base64 || null,
+        id_proof_front: idProofFront?.base64 || null,
+        id_proof_back: idProofBack?.base64 || null,
         photo: userPhoto?.base64 || null,
       };
 
@@ -535,7 +587,7 @@ export default function SignupScreen() {
         signupData.sponsorid = parseInt(sponsorId);
       }
 
-      console.log('Calling signup with:', { ...signupData, id_proof: idProof ? 'present' : 'missing', photo: userPhoto ? 'present' : 'missing' });
+      console.log('Calling signup with:', { ...signupData, id_proof_front: idProofFront ? 'present' : 'missing', id_proof_back: idProofBack ? 'present' : 'missing', photo: userPhoto ? 'present' : 'missing' });
       const result = await signup(signupData);
 
       if (result.success) {
@@ -763,23 +815,45 @@ export default function SignupScreen() {
             </>
           )}
 
-          {/* ID Proof Upload */}
+          {/* ID Proof Front Upload */}
           <View style={styles.uploadSection}>
-            <Text style={styles.uploadLabel}>ID Proof *</Text>
-            <TouchableOpacity style={styles.uploadButton} onPress={handlePickIdProof}>
-              {idProof ? (
+            <Text style={styles.uploadLabel}>ID Proof Front *</Text>
+            <TouchableOpacity style={styles.uploadButton} onPress={handlePickIdProofFront}>
+              {idProofFront ? (
                 <View style={styles.imagePreview}>
-                  <Image source={{ uri: idProof.uri }} style={styles.previewImage} />
+                  <Image source={{ uri: idProofFront.uri }} style={styles.previewImage} />
                   <View style={styles.imageOverlay}>
                     <Icon name="check-circle" size={24} color="#4CAF50" />
-                    <Text style={styles.imageOverlayText}>ID Proof Selected</Text>
+                    <Text style={styles.imageOverlayText}>ID Proof Front Selected</Text>
                   </View>
                 </View>
               ) : (
                 <>
                   <Icon name="upload-file" size={32} color="#D4AF37" />
-                  <Text style={styles.uploadButtonText}>Upload ID Proof</Text>
-                  <Text style={styles.uploadHint}>Aadhar, PAN, or Driving License</Text>
+                  <Text style={styles.uploadButtonText}>Upload ID Proof Front</Text>
+                  <Text style={styles.uploadHint}>Aadhar, PAN, or Driving License (Front)</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          {/* ID Proof Back Upload */}
+          <View style={styles.uploadSection}>
+            <Text style={styles.uploadLabel}>ID Proof Back *</Text>
+            <TouchableOpacity style={styles.uploadButton} onPress={handlePickIdProofBack}>
+              {idProofBack ? (
+                <View style={styles.imagePreview}>
+                  <Image source={{ uri: idProofBack.uri }} style={styles.previewImage} />
+                  <View style={styles.imageOverlay}>
+                    <Icon name="check-circle" size={24} color="#4CAF50" />
+                    <Text style={styles.imageOverlayText}>ID Proof Back Selected</Text>
+                  </View>
+                </View>
+              ) : (
+                <>
+                  <Icon name="upload-file" size={32} color="#D4AF37" />
+                  <Text style={styles.uploadButtonText}>Upload ID Proof Back</Text>
+                  <Text style={styles.uploadHint}>Aadhar, PAN, or Driving License (Back)</Text>
                 </>
               )}
             </TouchableOpacity>

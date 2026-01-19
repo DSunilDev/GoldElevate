@@ -730,7 +730,7 @@ router.post('/signup', [
       return res.status(400).json({ success: false, errors: errors.array() });
     }
 
-    const { phone, packageid, sponsorid, firstname, lastname, fathers_name, email, address, password: userPassword, id_proof, photo, msg91Verified } = req.body;
+    const { phone, packageid, sponsorid, firstname, lastname, fathers_name, email, address, password: userPassword, id_proof, id_proof_front, id_proof_back, photo, msg91Verified } = req.body;
 
     logger.info(`Signup attempt for phone: ${phone}, method: ${userPassword ? 'password' : 'otp'}, msg91Verified: ${msg91Verified}`);
     logger.info(`Signup request body: ${JSON.stringify({ phone, msg91Verified, hasPassword: !!userPassword })}`);
@@ -900,8 +900,10 @@ router.post('/signup', [
     );
     
     // Log id_proof and photo if provided (for future implementation)
-    if (id_proof || photo) {
-      logger.info(`Member ${nextMemberId} provided id_proof: ${id_proof ? 'yes' : 'no'}, photo: ${photo ? 'yes' : 'no'}`);
+    // Support both old format (id_proof) and new format (id_proof_front, id_proof_back)
+    const hasIdProof = id_proof || id_proof_front || id_proof_back;
+    if (hasIdProof || photo) {
+      logger.info(`Member ${nextMemberId} provided id_proof: ${id_proof ? 'yes (old format)' : 'no'}, id_proof_front: ${id_proof_front ? 'yes' : 'no'}, id_proof_back: ${id_proof_back ? 'yes' : 'no'}, photo: ${photo ? 'yes' : 'no'}`);
       // TODO: Store id_proof and photo in file storage or separate table
     }
 
